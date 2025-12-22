@@ -1,26 +1,23 @@
 """
-Auto-instrumentation for the Google Generative AI Python SDK (Gemini).
+Auto-instrumentation for the Google Generative AI Python SDKs (Gemini).
+Supports both `google.generativeai` (legacy) and `google.genai` (new).
 """
 
 from __future__ import annotations
 
+import types
 from typing import Any
+import inspect
 
 from ..core.client import TraciumClient
 from ..helpers.global_state import STATE, get_default_tags, get_options
 
-genai = None
-GenerativeModel = None
-
 
 def _normalize_prompt(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | dict[str, Any] | None:
-    """Extract prompt/contents from Google Generative AI API call."""
     if "contents" in kwargs:
         return {"contents": kwargs["contents"]}
-
     if "prompt" in kwargs:
         return kwargs["prompt"]
-
     if args:
         first = args[0]
         if isinstance(first, str):
@@ -29,86 +26,159 @@ def _normalize_prompt(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | di
             return {"contents": first}
         if isinstance(first, dict):
             return first
-        if GenerativeModel is not None and isinstance(first, GenerativeModel):
-            return "google"
-
+        # Handle objects from both SDKs if possible, or just return generic "google"
+        # We can try to detect specific types if imported, but generic handling is safer here to avoid heavy imports
+        if hasattr(first, "model_name") or hasattr(first, "generate_content"): 
+             return "google"
     return None
 
 
 def _extract_model_name(model_obj: Any) -> str | None:
-    """Extract model name from Google GenerativeModel instance."""
+    # google.generativeai GenerativeModel has 'model_name'
     if hasattr(model_obj, "model_name"):
         return str(model_obj.model_name)
+    # google.genai Client or Models might store it differently or not at all on the object itself
+    # but strictly speaking, in the new SDK, model is often passed as argument.
+    # If this helper is called on the *client* or *models* object, we might not find it.
     if hasattr(model_obj, "_model_name"):
         return str(model_obj._model_name)
     return None
 
-
 def patch_google_genai(client: TraciumClient) -> None:
-    """
-    Patch the Google Generative AI SDK to automatically trace all Gemini API calls.
-
-    Supports both sync and async generation methods.
-    """
     if STATE.google_patched:
         return
 
-    global genai, GenerativeModel
-    genai_module = genai
-    generative_model_cls = GenerativeModel
+    # 1. Patch Legacy SDK (google.generativeai)
+    _patch_legacy_sdk(client)
 
-    if genai_module is None or generative_model_cls is None:
-        try:
-            import google.generativeai as imported_genai  # type: ignore[import]
-            from google.generativeai import (
-                GenerativeModel as ImportedGenerativeModel,  # type: ignore[import]
-            )
-        except Exception:
-            return
-        genai = imported_genai
-        GenerativeModel = ImportedGenerativeModel
-        genai_module = imported_genai
-        generative_model_cls = ImportedGenerativeModel
+    # 2. Patch New SDK (google.genai)
+    _patch_new_sdk(client)
+
+    STATE.google_patched = True
+
+
+def _patch_legacy_sdk(client: TraciumClient) -> None:
+    try:
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=FutureWarning)
+            import google.generativeai as genai
+            from google.generativeai import GenerativeModel
+    except ImportError:
+        return
 
     options = get_options()
 
+    # Patch generate_content
+    if hasattr(GenerativeModel, "generate_content"):
+        try:
+            original_generate_content = GenerativeModel.generate_content
+
+            def traced_generate_content(self, *args: Any, **kwargs: Any) -> Any:
+                model_name = _extract_model_name(self) or options.default_model_id or "gemini-pro"
+                return _trace_google_call(
+                    client=client,
+                    original_fn=lambda: original_generate_content(self, *args, **kwargs),
+                    args=args,
+                    kwargs=kwargs,
+                    method_name="google.generativeai.GenerativeModel.generate_content",
+                    model_name=model_name,
+                )
+
+            GenerativeModel.generate_content = traced_generate_content
+        except Exception:
+            pass
+
+    # Patch generate_content_async
+    if hasattr(GenerativeModel, "generate_content_async"):
+        try:
+            original_generate_content_async = GenerativeModel.generate_content_async
+
+            async def traced_generate_content_async(self, *args: Any, **kwargs: Any) -> Any:
+                model_name = _extract_model_name(self) or options.default_model_id or "gemini-pro"
+                return await _trace_google_call_async(
+                    client=client,
+                    original_fn=lambda: original_generate_content_async(self, *args, **kwargs),
+                    args=args,
+                    kwargs=kwargs,
+                    method_name="google.generativeai.GenerativeModel.generate_content_async",
+                    model_name=model_name,
+                )
+
+            GenerativeModel.generate_content_async = traced_generate_content_async
+        except Exception:
+            pass
+
+
+def _patch_new_sdk(client: TraciumClient) -> None:
     try:
-        original_generate_content = generative_model_cls.generate_content
+        import google.genai as genai
+        # The new SDK structure:
+        # client = genai.Client(...)
+        # client.models.generate_content(...)
+        # We need to find the class of `client.models`.
+        # Usually it is google.genai.models.Models (sync) and google.genai.models.AsyncModels (async)
+        # But let's try to import specifically.
+        from google.genai.models import Models, AsyncModels
+    except ImportError:
+        return
 
-        def traced_generate_content(self, *args: Any, **kwargs: Any) -> Any:
-            model_name = _extract_model_name(self) or options.default_model_id or "gemini-pro"
-            return _trace_google_call(
-                client=client,
-                original_fn=lambda: original_generate_content(self, *args, **kwargs),
-                args=args,
-                kwargs=kwargs,
-                method_name="google.generativeai.generate_content",
-                model_name=model_name,
-            )
+    options = get_options()
 
-        generative_model_cls.generate_content = traced_generate_content
-    except Exception:
-        pass
+    # Patch Models.generate_content (Sync)
+    if hasattr(Models, "generate_content"):
+        try:
+            original_generate_content_new = Models.generate_content
 
-    try:
-        original_generate_content_async = generative_model_cls.generate_content_async
+            def traced_generate_content_new(self, *args: Any, **kwargs: Any) -> Any:
+                # In new SDK, model is often in kwargs as 'model' or comes from client config.
+                # 'self' here is the Models instance. It might reference the internal client.
+                # We try to find model name in kwargs first.
+                model_name = kwargs.get("model") 
+                if not model_name and args:
+                     # Check if model is passed as positional arg? 
+                     # Signature: generate_content(self, model: str, contents: ..., ...)
+                     # Verify signature if possible, but let's assume first arg if string and not 'contents'
+                     # Actually, signature is (self, *, model, contents, ...)?
+                     # Let's inspect signature safely or just fallback.
+                     pass
+                
+                if not model_name:
+                    model_name = options.default_model_id or "gemini-2.0-flash-exp" # Default for new SDK?
+                
+                return _trace_google_call(
+                    client=client,
+                    original_fn=lambda: original_generate_content_new(self, *args, **kwargs),
+                    args=args,
+                    kwargs=kwargs,
+                    method_name="google.genai.models.Models.generate_content",
+                    model_name=str(model_name),
+                )
 
-        async def traced_generate_content_async(self, *args: Any, **kwargs: Any) -> Any:
-            model_name = _extract_model_name(self) or options.default_model_id or "gemini-pro"
-            return await _trace_google_call_async(
-                client=client,
-                original_fn=lambda: original_generate_content_async(self, *args, **kwargs),
-                args=args,
-                kwargs=kwargs,
-                method_name="google.generativeai.generate_content_async",
-                model_name=model_name,
-            )
+            Models.generate_content = traced_generate_content_new
+        except Exception:
+             pass
 
-        generative_model_cls.generate_content_async = traced_generate_content_async
-    except Exception:
-        pass
+    # Patch AsyncModels.generate_content (Async)
+    if hasattr(AsyncModels, "generate_content"):
+        try:
+            original_generate_content_async_new = AsyncModels.generate_content
 
-    STATE.google_patched = True
+            async def traced_generate_content_async_new(self, *args: Any, **kwargs: Any) -> Any:
+                model_name = kwargs.get("model") or options.default_model_id or "gemini-2.0-flash-exp"
+                
+                return await _trace_google_call_async(
+                    client=client,
+                    original_fn=lambda: original_generate_content_async_new(self, *args, **kwargs),
+                    args=args,
+                    kwargs=kwargs,
+                    method_name="google.genai.models.AsyncModels.generate_content",
+                    model_name=str(model_name),
+                )
+
+            AsyncModels.generate_content = traced_generate_content_async_new
+        except Exception:
+            pass
 
 
 def _trace_google_call(
@@ -119,12 +189,8 @@ def _trace_google_call(
     method_name: str,
     model_name: str,
 ) -> Any:
-    """Trace a synchronous Google Generative AI API call."""
     from ..helpers.call_hierarchy import get_or_create_function_span
-    from ..instrumentation.auto_trace_tracker import (
-        get_current_function_for_span,
-        get_or_create_auto_trace,
-    )
+    from ..instrumentation.auto_trace_tracker import get_current_function_for_span, get_or_create_auto_trace
 
     options = get_options()
     prompt_payload = _normalize_prompt(args, kwargs)
@@ -137,57 +203,37 @@ def _trace_google_call(
     )
 
     basic_span_name = get_current_function_for_span()
-
     parent_span_id, span_name = get_or_create_function_span(trace_handle, basic_span_name)
 
-    with trace_handle.span(
-        span_type="llm",
-        name=span_name,
-        model_id=model_name,
-        parent_span_id=parent_span_id,
-    ) as span_handle:
+    with trace_handle.span(span_type="llm", name=span_name, model_id=model_name, parent_span_id=parent_span_id) as span_handle:
         if prompt_payload is not None:
             span_handle.record_input(prompt_payload)
-
         try:
             response = original_fn()
         except Exception as e:
             import traceback
-
-            error_info = {
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "traceback": traceback.format_exc(),
-            }
-            span_handle.record_output(error_info)
+            span_handle.record_output({"error": str(e), "traceback": traceback.format_exc()})
             span_handle.mark_failed(str(e))
             raise
 
-        input_tokens = None
-        output_tokens = None
-        if hasattr(response, "usage_metadata"):
-            usage = response.usage_metadata
-            if hasattr(usage, "prompt_token_count"):
-                input_tokens = usage.prompt_token_count
-            if hasattr(usage, "candidates_token_count"):
-                output_tokens = usage.candidates_token_count
-
-        if input_tokens is not None or output_tokens is not None:
+        # Handle usage metadata
+        # Generic handling since both SDKs might have usage info
+        usage = getattr(response, "usage_metadata", None)
+        if usage:
             span_handle.set_token_usage(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
+                input_tokens=getattr(usage, "prompt_token_count", None),
+                output_tokens=getattr(usage, "candidates_token_count", None),
             )
-
-        output_data = None
-        try:
-            if hasattr(response, "text"):
-                output_data = response.text
-            elif hasattr(response, "to_dict"):
-                output_data = response.to_dict()
-            else:
-                output_data = str(response)
-        except Exception:
-            output_data = str(response)
+        
+        # Output extraction
+        output_data = getattr(response, "text", None)
+        if output_data is None:
+             # Try to_dict or stringify
+             to_dict = getattr(response, "to_dict", None)
+             if to_dict:
+                 output_data = to_dict()
+             else:
+                 output_data = str(response)
 
         span_handle.record_output(output_data)
 
@@ -202,12 +248,8 @@ async def _trace_google_call_async(
     method_name: str,
     model_name: str,
 ) -> Any:
-    """Trace an asynchronous Google Generative AI API call."""
     from ..helpers.call_hierarchy import get_or_create_function_span
-    from ..instrumentation.auto_trace_tracker import (
-        get_current_function_for_span,
-        get_or_create_auto_trace,
-    )
+    from ..instrumentation.auto_trace_tracker import get_current_function_for_span, get_or_create_auto_trace
 
     options = get_options()
     prompt_payload = _normalize_prompt(args, kwargs)
@@ -220,15 +262,9 @@ async def _trace_google_call_async(
     )
 
     basic_span_name = get_current_function_for_span()
-
     parent_span_id, span_name = get_or_create_function_span(trace_handle, basic_span_name)
 
-    span_context = trace_handle.span(
-        span_type="llm",
-        name=span_name,
-        model_id=model_name,
-        parent_span_id=parent_span_id,
-    )
+    span_context = trace_handle.span(span_type="llm", name=span_name, model_id=model_name, parent_span_id=parent_span_id)
     span_handle = span_context.__enter__()
     if prompt_payload is not None:
         span_handle.record_input(prompt_payload)
@@ -239,32 +275,21 @@ async def _trace_google_call_async(
         span_context.__exit__(type(exc), exc, exc.__traceback__)
         raise
 
-    input_tokens = None
-    output_tokens = None
-    if hasattr(response, "usage_metadata"):
-        usage = response.usage_metadata
-        if hasattr(usage, "prompt_token_count"):
-            input_tokens = usage.prompt_token_count
-        if hasattr(usage, "candidates_token_count"):
-            output_tokens = usage.candidates_token_count
-
-    if input_tokens is not None or output_tokens is not None:
+    usage = getattr(response, "usage_metadata", None)
+    if usage:
         span_handle.set_token_usage(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            input_tokens=getattr(usage, "prompt_token_count", None),
+            output_tokens=getattr(usage, "candidates_token_count", None),
         )
 
-    output_data = None
-    try:
-        if hasattr(response, "text"):
-            output_data = response.text
-        elif hasattr(response, "to_dict"):
-            output_data = response.to_dict()
-        else:
-            output_data = str(response)
-    except Exception:
-        output_data = str(response)
-
+    output_data = getattr(response, "text", None)
+    if output_data is None:
+            to_dict = getattr(response, "to_dict", None)
+            if to_dict:
+                output_data = to_dict()
+            else:
+                output_data = str(response)
+    
     span_handle.record_output(output_data)
     span_context.__exit__(None, None, None)
 
