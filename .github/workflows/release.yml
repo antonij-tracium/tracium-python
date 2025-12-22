@@ -17,6 +17,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history to check if tag is on main
+
+      - name: Verify tag is on main branch
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          git fetch origin main 2>/dev/null || true
+          if git branch -r --contains "$TAG_NAME" | grep -q "origin/main"; then
+            echo "✓ Tag $TAG_NAME is on main branch"
+          else
+            echo "✗ Tag $TAG_NAME is not on main branch - workflow will not proceed"
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
