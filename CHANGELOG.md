@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CI/CD**: Updated GitHub Actions workflow to deploy to TestPyPI instead of production PyPI for safer release testing
 - Updated release workflow to use TestPyPI repository URL and environment
+## [0.1.1] - 2025-12-22
+
+### Added
+
+- Support for the new `google-genai` Python SDK (v0.1.0+) alongside the deprecated `google-generativeai`.
+- Automatic detection and instrumentation for `google-genai`.
+
+### Fixed
+
+- Suppressed `FutureWarning` from `google-generativeai` during initialization.
 
 ## [0.1.0] - 2025-12-17
 
