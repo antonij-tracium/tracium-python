@@ -6,7 +6,7 @@
 
 This is the development guide for the Tracium Python SDK. For user documentation, see [https://docs.tracium.ai](https://docs.tracium.ai).
 
-**Version:** 0.1.0
+**Version:** 0.1.2
 
 ## Project Overview
 
@@ -234,9 +234,9 @@ Version is defined in `src/tracium/core/version.py`. Update this file when relea
 6. Run type checking: `mypy tracium/`
 7. Build package: `python -m build`
 8. Test installation: `pip install dist/tracium_sdk-*.whl`
-9. Tag release: `git tag v0.1.0`
+9. Tag release: `git tag v0.1.2`
 10. Push tags: `git push --tags`
-11. Publish to PyPI: `twine upload dist/*`
+11. Publish to TestPyPI: The GitHub Actions workflow will automatically publish to TestPyPI when a version tag is pushed
 
 ## Testing Strategy
 
