@@ -2,7 +2,6 @@
 Tests for trace context management.
 """
 
-
 from tracium.context.trace_context import current_trace
 
 

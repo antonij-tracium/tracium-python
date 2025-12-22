@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2025-12-22
+
+### Fixed
+
+- **LangChain Integration**: Made `TraciumLangChainHandler` optional when LangChain is not installed, preventing import errors when the LangChain package is unavailable
+- Fixed LangChain integration to gracefully handle missing `BaseCallbackHandler` class
+
+### Changed
+
+- **CI/CD**: Updated GitHub Actions workflow to deploy to TestPyPI instead of production PyPI for safer release testing
+- Updated release workflow to use TestPyPI repository URL and environment
 ## [0.1.1] - 2025-12-22
 
 ### Added
@@ -103,6 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **0.1.2**: Fixed LangChain optional dependency handling, updated CI/CD to use TestPyPI
 - **0.1.0**: Initial public release with full feature set including automatic instrumentation, context propagation, and comprehensive tooling
 
 ## Upgrade Guide

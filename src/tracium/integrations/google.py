@@ -5,9 +5,7 @@ Supports both `google.generativeai` (legacy) and `google.genai` (new).
 
 from __future__ import annotations
 
-import types
 from typing import Any
-import inspect
 
 from ..core.client import TraciumClient
 from ..helpers.global_state import STATE, get_default_tags, get_options
@@ -26,23 +24,18 @@ def _normalize_prompt(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | di
             return {"contents": first}
         if isinstance(first, dict):
             return first
-        # Handle objects from both SDKs if possible, or just return generic "google"
-        # We can try to detect specific types if imported, but generic handling is safer here to avoid heavy imports
-        if hasattr(first, "model_name") or hasattr(first, "generate_content"): 
-             return "google"
+        if hasattr(first, "model_name") or hasattr(first, "generate_content"):
+            return "google"
     return None
 
 
 def _extract_model_name(model_obj: Any) -> str | None:
-    # google.generativeai GenerativeModel has 'model_name'
     if hasattr(model_obj, "model_name"):
         return str(model_obj.model_name)
-    # google.genai Client or Models might store it differently or not at all on the object itself
-    # but strictly speaking, in the new SDK, model is often passed as argument.
-    # If this helper is called on the *client* or *models* object, we might not find it.
     if hasattr(model_obj, "_model_name"):
         return str(model_obj._model_name)
     return None
+
 
 def patch_google_genai(client: TraciumClient) -> None:
     if STATE.google_patched:
@@ -60,10 +53,11 @@ def patch_google_genai(client: TraciumClient) -> None:
 def _patch_legacy_sdk(client: TraciumClient) -> None:
     try:
         import warnings
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=FutureWarning)
-            import google.generativeai as genai
-            from google.generativeai import GenerativeModel
+            import google.generativeai as genai  # noqa: F401
+            from google.generativeai import GenerativeModel  # noqa: F401
     except ImportError:
         return
 
@@ -112,14 +106,8 @@ def _patch_legacy_sdk(client: TraciumClient) -> None:
 
 def _patch_new_sdk(client: TraciumClient) -> None:
     try:
-        import google.genai as genai
-        # The new SDK structure:
-        # client = genai.Client(...)
-        # client.models.generate_content(...)
-        # We need to find the class of `client.models`.
-        # Usually it is google.genai.models.Models (sync) and google.genai.models.AsyncModels (async)
-        # But let's try to import specifically.
-        from google.genai.models import Models, AsyncModels
+        import google.genai as genai  # noqa: F401
+        from google.genai.models import AsyncModels, Models
     except ImportError:
         return
 
@@ -131,21 +119,13 @@ def _patch_new_sdk(client: TraciumClient) -> None:
             original_generate_content_new = Models.generate_content
 
             def traced_generate_content_new(self, *args: Any, **kwargs: Any) -> Any:
-                # In new SDK, model is often in kwargs as 'model' or comes from client config.
-                # 'self' here is the Models instance. It might reference the internal client.
-                # We try to find model name in kwargs first.
-                model_name = kwargs.get("model") 
+                model_name = kwargs.get("model")
                 if not model_name and args:
-                     # Check if model is passed as positional arg? 
-                     # Signature: generate_content(self, model: str, contents: ..., ...)
-                     # Verify signature if possible, but let's assume first arg if string and not 'contents'
-                     # Actually, signature is (self, *, model, contents, ...)?
-                     # Let's inspect signature safely or just fallback.
-                     pass
-                
+                    pass
+
                 if not model_name:
-                    model_name = options.default_model_id or "gemini-2.0-flash-exp" # Default for new SDK?
-                
+                    model_name = options.default_model_id or "gemini-2.0-flash-exp"
+
                 return _trace_google_call(
                     client=client,
                     original_fn=lambda: original_generate_content_new(self, *args, **kwargs),
@@ -157,7 +137,7 @@ def _patch_new_sdk(client: TraciumClient) -> None:
 
             Models.generate_content = traced_generate_content_new
         except Exception:
-             pass
+            pass
 
     # Patch AsyncModels.generate_content (Async)
     if hasattr(AsyncModels, "generate_content"):
@@ -165,8 +145,10 @@ def _patch_new_sdk(client: TraciumClient) -> None:
             original_generate_content_async_new = AsyncModels.generate_content
 
             async def traced_generate_content_async_new(self, *args: Any, **kwargs: Any) -> Any:
-                model_name = kwargs.get("model") or options.default_model_id or "gemini-2.0-flash-exp"
-                
+                model_name = (
+                    kwargs.get("model") or options.default_model_id or "gemini-2.0-flash-exp"
+                )
+
                 return await _trace_google_call_async(
                     client=client,
                     original_fn=lambda: original_generate_content_async_new(self, *args, **kwargs),
@@ -190,7 +172,10 @@ def _trace_google_call(
     model_name: str,
 ) -> Any:
     from ..helpers.call_hierarchy import get_or_create_function_span
-    from ..instrumentation.auto_trace_tracker import get_current_function_for_span, get_or_create_auto_trace
+    from ..instrumentation.auto_trace_tracker import (
+        get_current_function_for_span,
+        get_or_create_auto_trace,
+    )
 
     options = get_options()
     prompt_payload = _normalize_prompt(args, kwargs)
@@ -205,35 +190,34 @@ def _trace_google_call(
     basic_span_name = get_current_function_for_span()
     parent_span_id, span_name = get_or_create_function_span(trace_handle, basic_span_name)
 
-    with trace_handle.span(span_type="llm", name=span_name, model_id=model_name, parent_span_id=parent_span_id) as span_handle:
+    with trace_handle.span(
+        span_type="llm", name=span_name, model_id=model_name, parent_span_id=parent_span_id
+    ) as span_handle:
         if prompt_payload is not None:
             span_handle.record_input(prompt_payload)
         try:
             response = original_fn()
         except Exception as e:
             import traceback
+
             span_handle.record_output({"error": str(e), "traceback": traceback.format_exc()})
             span_handle.mark_failed(str(e))
             raise
 
-        # Handle usage metadata
-        # Generic handling since both SDKs might have usage info
         usage = getattr(response, "usage_metadata", None)
         if usage:
             span_handle.set_token_usage(
                 input_tokens=getattr(usage, "prompt_token_count", None),
                 output_tokens=getattr(usage, "candidates_token_count", None),
             )
-        
-        # Output extraction
+
         output_data = getattr(response, "text", None)
         if output_data is None:
-             # Try to_dict or stringify
-             to_dict = getattr(response, "to_dict", None)
-             if to_dict:
-                 output_data = to_dict()
-             else:
-                 output_data = str(response)
+            to_dict = getattr(response, "to_dict", None)
+            if to_dict:
+                output_data = to_dict()
+            else:
+                output_data = str(response)
 
         span_handle.record_output(output_data)
 
@@ -249,7 +233,10 @@ async def _trace_google_call_async(
     model_name: str,
 ) -> Any:
     from ..helpers.call_hierarchy import get_or_create_function_span
-    from ..instrumentation.auto_trace_tracker import get_current_function_for_span, get_or_create_auto_trace
+    from ..instrumentation.auto_trace_tracker import (
+        get_current_function_for_span,
+        get_or_create_auto_trace,
+    )
 
     options = get_options()
     prompt_payload = _normalize_prompt(args, kwargs)
@@ -264,7 +251,9 @@ async def _trace_google_call_async(
     basic_span_name = get_current_function_for_span()
     parent_span_id, span_name = get_or_create_function_span(trace_handle, basic_span_name)
 
-    span_context = trace_handle.span(span_type="llm", name=span_name, model_id=model_name, parent_span_id=parent_span_id)
+    span_context = trace_handle.span(
+        span_type="llm", name=span_name, model_id=model_name, parent_span_id=parent_span_id
+    )
     span_handle = span_context.__enter__()
     if prompt_payload is not None:
         span_handle.record_input(prompt_payload)
@@ -284,12 +273,12 @@ async def _trace_google_call_async(
 
     output_data = getattr(response, "text", None)
     if output_data is None:
-            to_dict = getattr(response, "to_dict", None)
-            if to_dict:
-                output_data = to_dict()
-            else:
-                output_data = str(response)
-    
+        to_dict = getattr(response, "to_dict", None)
+        if to_dict:
+            output_data = to_dict()
+        else:
+            output_data = str(response)
+
     span_handle.record_output(output_data)
     span_context.__exit__(None, None, None)
 
