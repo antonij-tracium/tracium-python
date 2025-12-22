@@ -33,8 +33,8 @@ class _TrackedTrace:
     owned: bool = True
 
 
-
 if BaseCallbackHandler is not None:
+
     class TraciumLangChainHandler(BaseCallbackHandler):
         """
         A LangChain callback handler that mirrors chains, LLM calls, and tool usage into
@@ -217,7 +217,9 @@ if BaseCallbackHandler is not None:
             else:
                 owner = self._trace_mapping.get(parent_run_id, parent_run_id)
                 self._finish_span(
-                    lc_run_id=run_id, owner_run_id=owner, output_payload=self._serialize_input(outputs)
+                    lc_run_id=run_id,
+                    owner_run_id=owner,
+                    output_payload=self._serialize_input(outputs),
                 )
                 with self._lock:
                     self._trace_mapping.pop(run_id, None)
@@ -250,11 +252,11 @@ if BaseCallbackHandler is not None:
         def _serialize_input(self, obj: Any) -> Any:
             if obj is None:
                 return None
-            if isinstance(obj, (str, int, float, bool)):
+            if isinstance(obj, str | int | float | bool):
                 return obj
             if isinstance(obj, dict):
                 return {k: self._serialize_input(v) for k, v in obj.items()}
-            if isinstance(obj, (list, tuple, set)):
+            if isinstance(obj, list | tuple | set):
                 return [self._serialize_input(item) for item in obj]
 
             if hasattr(obj, "choices") and hasattr(obj, "model"):
@@ -584,7 +586,6 @@ else:
     TraciumLangChainHandler = None
 
 
-
 def register_langchain_handler(client: TraciumClient) -> None:
     if BaseCallbackHandler is None or STATE.langchain_registered:
         return
@@ -610,5 +611,3 @@ def register_langchain_handler(client: TraciumClient) -> None:
     _augment_manager(CallbackManager)
     _augment_manager(AsyncCallbackManager)
     STATE.langchain_registered = True
-
-

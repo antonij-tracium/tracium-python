@@ -154,7 +154,7 @@ def validate_tags(tags: Sequence[str] | None) -> list[str]:
     if tags is None:
         return []
 
-    if not isinstance(tags, (list, tuple)):
+    if not isinstance(tags, list | tuple):
         raise TypeError(f"tags must be a list or tuple, got {type(tags).__name__}")
 
     if len(tags) > MAX_TAGS_COUNT:

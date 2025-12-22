@@ -181,9 +181,6 @@ def start_trace(
     )
 
 
-
-
-
 def trace(api_key: str | None = None, **kwargs: Any) -> TraciumClient:
     """
     ONE-LINE SETUP: Initialize Tracium and enable automatic tracing for all supported libraries.

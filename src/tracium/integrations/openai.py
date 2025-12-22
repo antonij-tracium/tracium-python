@@ -41,7 +41,7 @@ def _json_ready(value: Any) -> Any:
     except TypeError:
         if isinstance(value, dict):
             return {str(k): _json_ready(v) for k, v in value.items()}
-        if isinstance(value, (list, tuple, set)):
+        if isinstance(value, list | tuple | set):
             return [_json_ready(v) for v in value]
         return repr(value)
 

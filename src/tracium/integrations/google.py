@@ -25,7 +25,7 @@ def _normalize_prompt(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | di
         if isinstance(first, dict):
             return first
         if hasattr(first, "model_name") or hasattr(first, "generate_content"):
-             return "google"
+            return "google"
     return None
 
 
@@ -35,6 +35,7 @@ def _extract_model_name(model_obj: Any) -> str | None:
     if hasattr(model_obj, "_model_name"):
         return str(model_obj._model_name)
     return None
+
 
 def patch_google_genai(client: TraciumClient) -> None:
     if STATE.google_patched:
@@ -52,6 +53,7 @@ def patch_google_genai(client: TraciumClient) -> None:
 def _patch_legacy_sdk(client: TraciumClient) -> None:
     try:
         import warnings
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=FutureWarning)
             import google.generativeai as genai  # noqa: F401
@@ -119,7 +121,7 @@ def _patch_new_sdk(client: TraciumClient) -> None:
             def traced_generate_content_new(self, *args: Any, **kwargs: Any) -> Any:
                 model_name = kwargs.get("model")
                 if not model_name and args:
-                     pass
+                    pass
 
                 if not model_name:
                     model_name = options.default_model_id or "gemini-2.0-flash-exp"
@@ -135,7 +137,7 @@ def _patch_new_sdk(client: TraciumClient) -> None:
 
             Models.generate_content = traced_generate_content_new
         except Exception:
-             pass
+            pass
 
     # Patch AsyncModels.generate_content (Async)
     if hasattr(AsyncModels, "generate_content"):
@@ -143,7 +145,9 @@ def _patch_new_sdk(client: TraciumClient) -> None:
             original_generate_content_async_new = AsyncModels.generate_content
 
             async def traced_generate_content_async_new(self, *args: Any, **kwargs: Any) -> Any:
-                model_name = kwargs.get("model") or options.default_model_id or "gemini-2.0-flash-exp"
+                model_name = (
+                    kwargs.get("model") or options.default_model_id or "gemini-2.0-flash-exp"
+                )
 
                 return await _trace_google_call_async(
                     client=client,
@@ -186,13 +190,16 @@ def _trace_google_call(
     basic_span_name = get_current_function_for_span()
     parent_span_id, span_name = get_or_create_function_span(trace_handle, basic_span_name)
 
-    with trace_handle.span(span_type="llm", name=span_name, model_id=model_name, parent_span_id=parent_span_id) as span_handle:
+    with trace_handle.span(
+        span_type="llm", name=span_name, model_id=model_name, parent_span_id=parent_span_id
+    ) as span_handle:
         if prompt_payload is not None:
             span_handle.record_input(prompt_payload)
         try:
             response = original_fn()
         except Exception as e:
             import traceback
+
             span_handle.record_output({"error": str(e), "traceback": traceback.format_exc()})
             span_handle.mark_failed(str(e))
             raise
@@ -206,11 +213,11 @@ def _trace_google_call(
 
         output_data = getattr(response, "text", None)
         if output_data is None:
-             to_dict = getattr(response, "to_dict", None)
-             if to_dict:
-                 output_data = to_dict()
-             else:
-                 output_data = str(response)
+            to_dict = getattr(response, "to_dict", None)
+            if to_dict:
+                output_data = to_dict()
+            else:
+                output_data = str(response)
 
         span_handle.record_output(output_data)
 
@@ -244,7 +251,9 @@ async def _trace_google_call_async(
     basic_span_name = get_current_function_for_span()
     parent_span_id, span_name = get_or_create_function_span(trace_handle, basic_span_name)
 
-    span_context = trace_handle.span(span_type="llm", name=span_name, model_id=model_name, parent_span_id=parent_span_id)
+    span_context = trace_handle.span(
+        span_type="llm", name=span_name, model_id=model_name, parent_span_id=parent_span_id
+    )
     span_handle = span_context.__enter__()
     if prompt_payload is not None:
         span_handle.record_input(prompt_payload)
@@ -264,11 +273,11 @@ async def _trace_google_call_async(
 
     output_data = getattr(response, "text", None)
     if output_data is None:
-            to_dict = getattr(response, "to_dict", None)
-            if to_dict:
-                output_data = to_dict()
-            else:
-                output_data = str(response)
+        to_dict = getattr(response, "to_dict", None)
+        if to_dict:
+            output_data = to_dict()
+        else:
+            output_data = str(response)
 
     span_handle.record_output(output_data)
     span_context.__exit__(None, None, None)
