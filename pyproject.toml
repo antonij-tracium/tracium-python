@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tracium"
-version = "0.1.0"
+version = "0.1.1"
 description = "Official Python SDK for the Tracium telemetry and evaluation API. Automatic tracing for OpenAI, Anthropic, Google Gemini, LangChain, and LangGraph."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -42,6 +42,7 @@ dependencies = [
     "openai>=1.0.0",
     "anthropic>=0.18.0",
     "google-generativeai>=0.3.0",
+    "google-genai>=0.1.0",
     "langchain>=0.1.0",
     "langchain-core>=0.1.0",
     "langgraph>=0.0.1",
@@ -66,6 +67,7 @@ anthropic = [
 ]
 google = [
     "google-generativeai>=0.3.0",
+    "google-genai>=0.1.0",
 ]
 langchain = [
     "langchain>=0.1.0",
@@ -74,17 +76,14 @@ langchain = [
 langgraph = [
     "langgraph>=0.0.1",
 ]
-embeddings = [
-    "sentence-transformers>=2.7.0",
-]
 all = [
     "openai>=1.0.0",
     "anthropic>=0.18.0",
     "google-generativeai>=0.3.0",
+    "google-genai>=0.1.0",
     "langchain>=0.1.0",
     "langchain-core>=0.1.0",
     "langgraph>=0.0.1",
-    "sentence-transformers>=2.7.0",
 ]
 
 [project.urls]
