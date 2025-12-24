@@ -1,7 +1,6 @@
 """
 API endpoint methods for Tracium SDK.
 """
-
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -43,14 +42,8 @@ class TraciumAPIEndpoints:
     ) -> dict[str, Any]:
         from ..helpers.validation import validate_agent_name
 
-        validated_agent_name = _validate_and_log(
-            "start_agent_trace", validate_agent_name, agent_name
-        )
-        validated_trace_id = (
-            _validate_and_log("start_agent_trace", validate_trace_id, trace_id)
-            if trace_id
-            else None
-        )
+        validated_agent_name = _validate_and_log("start_agent_trace", validate_agent_name, agent_name)
+        validated_trace_id = _validate_and_log("start_agent_trace", validate_trace_id, trace_id) if trace_id else None
         validated_tags = _validate_and_log("start_agent_trace", validate_tags, tags)
 
         payload: dict[str, Any] = {"agent_name": validated_agent_name}
@@ -69,10 +62,7 @@ class TraciumAPIEndpoints:
         if tenant_id:
             payload["tenant_id"] = str(tenant_id)[:255]
 
-        logger.debug(
-            "Starting agent trace",
-            extra={"agent_name": validated_agent_name, "trace_id": validated_trace_id},
-        )
+        logger.debug("Starting agent trace", extra={"agent_name": validated_agent_name, "trace_id": validated_trace_id})
         return self._http.post("/agents/traces", json=payload)
 
     def record_agent_spans(
@@ -98,17 +88,12 @@ class TraciumAPIEndpoints:
                 validated_span["span_id"] = validate_span_id(str(validated_span["span_id"]))
                 del validated_span["span_id"]
             if "parent_span_id" in validated_span:
-                validated_span["parent_span_id"] = validate_span_id(
-                    str(validated_span["parent_span_id"])
-                )
+                validated_span["parent_span_id"] = validate_span_id(str(validated_span["parent_span_id"]))
                 del validated_span["parent_span_id"]
             validated_spans.append(validated_span)
 
         payload = {"spans": validated_spans}
-        logger.debug(
-            "Recording agent spans",
-            extra={"trace_id": validated_trace_id, "span_count": len(validated_spans)},
-        )
+        logger.debug("Recording agent spans", extra={"trace_id": validated_trace_id, "span_count": len(validated_spans)})
         return self._http.post(f"/agents/traces/{validated_trace_id}/spans", json=payload)
 
     def update_agent_span(
@@ -127,10 +112,6 @@ class TraciumAPIEndpoints:
             validated_span["span_type"] = validate_span_type(str(validated_span["span_type"]))
 
         payload = {"spans": [validated_span]}
-        logger.debug(
-            "Updating agent span",
-            extra={"trace_id": validated_trace_id, "span_id": validated_span_id},
-        )
         result = self._http.post(f"/agents/traces/{validated_trace_id}/spans", json=payload)
         if isinstance(result, list) and len(result) > 0:
             return result[0]
@@ -164,9 +145,7 @@ class TraciumAPIEndpoints:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         validated_trace_id = _validate_and_log("fail_agent_trace", validate_trace_id, trace_id)
-        validated_error = (
-            _validate_and_log("fail_agent_trace", validate_error_message, error) if error else None
-        )
+        validated_error = _validate_and_log("fail_agent_trace", validate_error_message, error) if error else None
 
         payload: dict[str, Any] = {}
         if validated_error:
@@ -229,79 +208,17 @@ class TraciumAPIEndpoints:
             params["alert_channels"] = list(alert_channels)
         return self._http.post("/drift/prompt-embeddings/check", params=params)
 
-    def create_prompt_embeddings_baseline(
-        self,
-        workspace_id: str,
-        *,
-        baseline_days: int = 60,
-    ) -> dict[str, Any]:
-        """
-        Create or update baseline embedding centroid for a workspace.
-
-        Args:
-            workspace_id: Workspace ID
-            baseline_days: Number of days to use for baseline (default: 60)
-        """
-        params: dict[str, Any] = {
-            "workspace_id": workspace_id,
-            "baseline_days": baseline_days,
-        }
-        return self._http.post("/drift/prompt-embeddings/baseline", params=params)
-
-    def create_evaluation(
-        self,
-        input_text: str,
-        output_text: str,
-        *,
-        context: str | None = None,
-        workspace_id: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Submit an evaluation for processing.
-
-        Embeddings are computed automatically on the backend.
-
-        Args:
-            input_text: The input/query text for evaluation
-            output_text: The generated output text for evaluation
-            context: Optional context for evaluation
-            workspace_id: Optional workspace ID (defaults to user's default workspace)
-
-        Returns:
-            Dict containing the created evaluation with id, status, etc.
-
-        Raises:
-            ValueError: If input_text or output_text is empty
-        """
-        if not input_text or not input_text.strip():
-            raise ValueError("input_text cannot be empty")
-        if not output_text or not output_text.strip():
-            raise ValueError("output_text cannot be empty")
-
-        payload: dict[str, Any] = {
-            "input_text": input_text.strip(),
-            "output_text": output_text.strip(),
-        }
-
-        if context:
-            payload["context"] = context.strip()
-        if workspace_id:
-            payload["workspace_id"] = workspace_id
-
-        logger.debug("Creating evaluation")
-        return self._http.post("/evaluations/", json=payload)
-
     def get_current_user(self) -> dict[str, Any]:
         """
         Get current user information including plan.
-
         The result is cached to avoid repeated API calls.
-
         Returns:
             Dict containing user info with 'plan' field (e.g., 'free', 'developer', 'startup', 'scale')
         """
         user_info = self._http.get("/auth/me")
-        return {"plan": user_info.get("plan", "free")}
+        return {
+            "plan": user_info.get("plan", "free")
+        }
 
     def get_gantt_data(self, trace_id: str) -> dict[str, Any]:
         """
@@ -323,3 +240,4 @@ class TraciumAPIEndpoints:
         validated_trace_id = _validate_and_log("get_gantt_data", validate_trace_id, trace_id)
         logger.debug("Fetching Gantt chart data", extra={"trace_id": validated_trace_id})
         return self._http.get(f"/agents/traces/{validated_trace_id}/gantt")
+

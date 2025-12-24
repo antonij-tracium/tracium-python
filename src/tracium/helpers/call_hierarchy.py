@@ -11,7 +11,6 @@ import contextvars
 import inspect
 import threading
 import time
-import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -102,7 +101,7 @@ def _get_invocation_id(function_name: str, file_path: str, line_number: int) -> 
 
 def _get_user_call_hierarchy() -> list[FrameInfo]:
     """
-    Get the call hierarchy of user functions (excluding internal libraries).
+    Get the call hierarchy of user functions (excluding internal libraries and web framework handlers).
 
     Returns:
         list of FrameInfo objects from deepest to shallowest
@@ -127,6 +126,11 @@ def _get_user_call_hierarchy() -> list[FrameInfo]:
                 "concurrent",
                 "asyncio",
                 "site-packages",
+                "werkzeug",
+                "starlette",
+                "django/core",
+                "uvicorn",
+                "gunicorn",
             ]
 
             if any(pattern in filename for pattern in skip_patterns):
@@ -134,6 +138,22 @@ def _get_user_call_hierarchy() -> list[FrameInfo]:
                 continue
 
             if function_name in {"<module>", "__enter__", "__exit__"}:
+                frame = frame.f_back
+                continue
+
+            web_framework_patterns = [
+                "dispatch_request",
+                "view_function",
+                "route",
+                "endpoint",
+                "run_endpoint_function",
+                "get_response",
+                "handler",
+                "_handle",
+            ]
+
+            is_web_handler = any(pattern in function_name.lower() for pattern in web_framework_patterns)
+            if is_web_handler:
                 frame = frame.f_back
                 continue
 
@@ -160,79 +180,34 @@ def get_or_create_function_span(
     llm_call_name: str,
 ) -> tuple[str | None, str]:
     """
-    Get or create a function span for the current call context.
-
-    This analyzes the call stack to find user functions that should be parent spans.
-    For example, if we have:
-        research_topic() -> call_openai() -> [OpenAI API call]
-
-    We want to create:
-        - research_topic (function span, parent_id=None)
-          └─ call_openai (llm span, parent_id=research_topic_span_id)
-
+    Get the function name for the LLM span.
+    This function is generic and works for any use case:
+    - Web frameworks (Flask, FastAPI, Django)
+    - CLI scripts
+    - Batch jobs
+    - Any other Python application
+    IMPORTANT: This function does NOT create function spans.
+    Only LLM calls create spans. Function spans are never created automatically.
+    The span is named after the function that directly calls the LLM.
+    The trace is named after the entry point (endpoint or beginning function).
     Args:
-        trace_handle: The agent trace handle
-        llm_call_name: The name of the immediate calling function
+        trace_handle: The agent trace handle (unused, kept for API compatibility)
+        llm_call_name: The name of the immediate calling function (fallback)
 
     Returns:
         tuple of (parent_span_id, span_name)
-            - parent_span_id: The span ID to use as parent for the LLM call
-            - span_name: The name to use for the LLM span
+            - parent_span_id: Always None (no function spans are created)
+            - span_name: The name of the function that calls the LLM
     """
-    trace_id = getattr(trace_handle, "id", None)
-    ctx_map = _get_function_context_map()
-    cached_trace_id = _FUNCTION_CONTEXT_TRACE_ID.get()
-
-    if trace_id is not None and trace_id != cached_trace_id:
-        ctx_map = _reset_function_context(trace_id)
-    elif trace_id is None and cached_trace_id is not None:
-        ctx_map = _reset_function_context(None)
-
     call_hierarchy = _get_user_call_hierarchy()
 
     if not call_hierarchy:
         return None, llm_call_name
 
     caller_frame = call_hierarchy[0]
-
-    if len(call_hierarchy) == 1:
-        return None, caller_frame.function_name
-
-    parent_frames = call_hierarchy[1:]
-    thread_id = threading.get_ident()
-    active_keys: set[str] = set()
-    parent_span_id: str | None = None
-
-    for depth_level, frame_info in enumerate(reversed(parent_frames)):
-        context_key = frame_info.context_key(thread_id)
-        active_keys.add(context_key)
-        span_id = ctx_map.get(context_key)
-
-        if span_id is None:
-            span_id = str(uuid.uuid4())
-            trace_handle.record_span(
-                span_type="function",
-                name=frame_info.function_name,
-                parent_span_id=parent_span_id,
-                span_id=span_id,
-                depth_level=depth_level,
-                input={
-                    "function": frame_info.function_name,
-                    "file": frame_info.file_path,
-                    "line": frame_info.line_number,
-                },
-                output={"status": "in_progress"},
-            )
-            ctx_map[context_key] = span_id
-
-        parent_span_id = span_id
-
-    stale_keys = [key for key in list(ctx_map.keys()) if key not in active_keys]
-    for key in stale_keys:
-        ctx_map.pop(key, None)
-
     span_name = caller_frame.function_name or llm_call_name
-    return parent_span_id, span_name
+
+    return None, span_name
 
 
 def clear_function_context():
