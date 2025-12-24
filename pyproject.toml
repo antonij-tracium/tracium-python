@@ -55,8 +55,8 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-asyncio>=0.21.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0",
+    "ruff>=0.9.9",
+    "mypy>=1.4.1",
     "python-dotenv>=1.0.0",
 ]
 openai = [
@@ -109,6 +109,7 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]
+extend-ignore = ["PGH003"]  # Prevent ruff from adding blanket type ignores
 
 [tool.mypy]
 python_version = "3.10"
