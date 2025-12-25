@@ -121,7 +121,9 @@ class AgentTraceHandle:
         )
         self._state.finished = True
         if not isinstance(payload, dict):
-            raise TypeError(f"Expected dict from complete_agent_trace, got {type(payload).__name__}")
+            raise TypeError(
+                f"Expected dict from complete_agent_trace, got {type(payload).__name__}"
+            )
         return payload
 
     def fail(
