@@ -18,9 +18,11 @@ def _extract_chunk_content(chunk: Any) -> str | None:
         return None
     choice = chunk.choices[0]
     if hasattr(choice, "delta") and hasattr(choice.delta, "content"):
-        return choice.delta.content
+        content = choice.delta.content
+        return str(content) if content is not None else None
     if hasattr(choice, "message") and hasattr(choice.message, "content"):
-        return choice.message.content
+        content = choice.message.content
+        return str(content) if content is not None else None
     return None
 
 
@@ -145,7 +147,7 @@ def patch_openai(client: TraciumClient) -> None:
                     )
             else:
 
-                def traced(*args: Any, **kwargs: Any) -> Any:
+                def traced(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
                     return _trace_openai_call(
                         client, lambda: original(*args, **kwargs), args, kwargs
                     )

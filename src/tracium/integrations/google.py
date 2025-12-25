@@ -15,7 +15,10 @@ def _normalize_prompt(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | di
     if "contents" in kwargs:
         return {"contents": kwargs["contents"]}
     if "prompt" in kwargs:
-        return kwargs["prompt"]
+        prompt = kwargs["prompt"]
+        if isinstance(prompt, (str | dict)):
+            return prompt
+        return None
     if args:
         first = args[0]
         if isinstance(first, str):

@@ -170,7 +170,7 @@ def patch_threading_module():
     if not hasattr(threading_module, "_original_Thread"):
         threading_module._original_Thread = threading_module.Thread  # type: ignore[attr-defined]
 
-    threading_module.Thread = ContextThread
+    threading_module.Thread = ContextThread  # type: ignore[misc]
 
 
 def unpatch_threading_module():
@@ -182,5 +182,5 @@ def unpatch_threading_module():
     import threading as threading_module
 
     if hasattr(threading_module, "_original_Thread"):
-        threading_module.Thread = threading_module._original_Thread  # type: ignore[attr-defined]
+        threading_module.Thread = threading_module._original_Thread  # type: ignore[misc]
         delattr(threading_module, "_original_Thread")

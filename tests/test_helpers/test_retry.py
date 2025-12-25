@@ -25,8 +25,10 @@ class TestRetryConfig:
         assert config.backoff_factor == 1.0
         assert config.initial_delay == 0.1
         assert config.max_delay == 60.0
+        assert config.retryable_status_codes is not None
         assert 429 in config.retryable_status_codes
         assert 500 in config.retryable_status_codes
+        assert config.retryable_exceptions is not None
         assert httpx.ConnectTimeout in config.retryable_exceptions
 
     def test_custom_config(self):

@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-_FUNCTION_CONTEXT_SPANS: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
+_FUNCTION_CONTEXT_SPANS: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
     "tracium_function_context_spans",
     default=None,
 )
@@ -27,7 +27,7 @@ _FUNCTION_CONTEXT_TRACE_ID: contextvars.ContextVar[str | None] = contextvars.Con
     default=None,
 )
 
-_INVOCATION_COUNTER: contextvars.ContextVar[dict[str, int]] = contextvars.ContextVar(
+_INVOCATION_COUNTER: contextvars.ContextVar[dict[str, int] | None] = contextvars.ContextVar(
     "tracium_invocation_count",
     default=None,
 )

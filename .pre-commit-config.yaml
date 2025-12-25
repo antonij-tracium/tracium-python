@@ -10,9 +10,9 @@ repos:
     rev: v1.4.1
     hooks:
       - id: mypy
-        additional_dependencies: [ ".[all,dev]" ]
+        additional_dependencies: [".[all,dev]"]
+        args: ["--install-types", "--non-interactive"]
         files: ^src/.*\.py$
-
 
   - repo: local
     hooks:
@@ -22,4 +22,3 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
-

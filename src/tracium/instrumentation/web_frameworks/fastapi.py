@@ -110,11 +110,11 @@ def register_fastapi_response_hook() -> None:
                     )
 
                 Starlette.exception_handler = patched_exception_handler
-                Starlette._tracium_exception_patched = True
+                setattr(Starlette, "_tracium_exception_patched", True)
         except Exception:
             pass
 
-        Response._tracium_response_patched = True
+        setattr(Response, "_tracium_response_patched", True)
     except ImportError:
         pass
     except Exception:

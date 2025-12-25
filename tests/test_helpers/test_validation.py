@@ -163,7 +163,8 @@ class TestValidateTags:
 
     def test_none_tags_filtered(self):
         """Test that None tags are filtered out."""
-        assert validate_tags(["tag1", None, "tag2", None]) == ["tag1", "tag2"]
+        tags_with_none: list[str | None] = ["tag1", None, "tag2", None]
+        assert validate_tags(tags_with_none) == ["tag1", "tag2"]  # type: ignore[arg-type]
 
     @pytest.mark.parametrize("value", ["not a list", 123])
     def test_non_sequence_raises(self, value):
@@ -200,7 +201,7 @@ class TestValidateMetadata:
     def test_non_string_key_raises(self):
         """Test that non-string key raises TypeError."""
         with pytest.raises(TypeError, match="keys must be strings"):
-            validate_metadata({123: "value"})
+            validate_metadata({123: "value"})  # type: ignore[dict-item]
 
 
 class TestValidateApiKey:
@@ -228,7 +229,7 @@ class TestValidateApiKey:
     def test_non_string_raises(self):
         """Test that non-string input raises TypeError."""
         with pytest.raises(TypeError):
-            validate_api_key(123)
+            validate_api_key(123)  # type: ignore[arg-type]
 
 
 class TestValidateErrorMessage:
@@ -248,8 +249,8 @@ class TestValidateErrorMessage:
 
     def test_non_string_converted(self):
         """Test that non-string is converted to string."""
-        assert validate_error_message(123) == "123"
-        assert validate_error_message(Exception("test")) == "test"
+        assert validate_error_message(123) == "123"  # type: ignore[arg-type]
+        assert validate_error_message(Exception("test")) == "test"  # type: ignore[arg-type]
 
 
 class TestValidateName:
@@ -277,4 +278,4 @@ class TestValidateName:
     def test_non_string_raises(self):
         """Test that non-string input raises TypeError."""
         with pytest.raises(TypeError):
-            validate_name(123)
+            validate_name(123)  # type: ignore[arg-type]

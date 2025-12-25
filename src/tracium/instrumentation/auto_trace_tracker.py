@@ -191,7 +191,7 @@ def _register_asyncio_handler() -> None:
                         loop.set_exception_handler(_asyncio_exception_handler)
                     return loop
 
-                patched._tracium_patched = True
+                setattr(patched, "_tracium_patched", True)
                 asyncio.new_event_loop = patched
             return
 
@@ -245,10 +245,10 @@ class AutoTraceContext:
         self.has_failed_span = True
 
 
-def _get_user_frames() -> list[tuple]:
+def _get_user_frames() -> list[tuple[Any, ...]]:
     """Extract user frames from the call stack, skipping internal/library frames."""
     frame = inspect.currentframe()
-    user_frames = []
+    user_frames: list[tuple[Any, ...]] = []
     try:
         if frame is not None:
             frame = frame.f_back
@@ -286,7 +286,8 @@ def _get_caller_info() -> tuple[str, str, int]:
         if not is_helper and func_name not in skip_names:
             return func_name, file_path, line_no
 
-    return user_frames[0][:3]
+    first_frame = user_frames[0]
+    return (str(first_frame[0]), str(first_frame[1]), int(first_frame[2]))
 
 
 def _is_web_framework_internal(func_name: str, file_path: str) -> bool:

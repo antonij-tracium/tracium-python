@@ -250,6 +250,7 @@ def register_span_creation(
                     if sibling.sequence_number is None:
                         sibling.sequence_number = i
 
+                assert record.sequence_number is not None
                 seq = record.sequence_number
 
                 _span_creation_registry[span_id] = record

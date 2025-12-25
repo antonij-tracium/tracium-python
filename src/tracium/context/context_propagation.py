@@ -111,12 +111,12 @@ def patch_thread_pool_executor() -> None:
     if concurrent.futures.ThreadPoolExecutor is ContextPropagatingThreadPoolExecutor:
         return
 
-    concurrent.futures.ThreadPoolExecutor = ContextPropagatingThreadPoolExecutor
+    concurrent.futures.ThreadPoolExecutor = ContextPropagatingThreadPoolExecutor  # type: ignore[misc]
 
     import sys
 
     if "concurrent.futures" in sys.modules:
-        sys.modules["concurrent.futures"].ThreadPoolExecutor = ContextPropagatingThreadPoolExecutor
+        sys.modules["concurrent.futures"].ThreadPoolExecutor = ContextPropagatingThreadPoolExecutor  # type: ignore[attr-defined]
 
 
 def unpatch_thread_pool_executor() -> None:
@@ -127,12 +127,12 @@ def unpatch_thread_pool_executor() -> None:
     """
     import concurrent.futures
 
-    concurrent.futures.ThreadPoolExecutor = _original_thread_pool_executor
+    concurrent.futures.ThreadPoolExecutor = _original_thread_pool_executor  # type: ignore[misc]
 
     import sys
 
     if "concurrent.futures" in sys.modules:
-        sys.modules["concurrent.futures"].ThreadPoolExecutor = _original_thread_pool_executor
+        sys.modules["concurrent.futures"].ThreadPoolExecutor = _original_thread_pool_executor  # type: ignore[attr-defined]
 
 
 async def run_in_executor_with_context(executor, func, *args):

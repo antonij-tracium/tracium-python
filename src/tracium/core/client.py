@@ -166,8 +166,12 @@ class TraciumClient:
                 "base_url": self._config.base_url,
                 "timeout": self._config.timeout,
                 "retry_config": {
-                    "max_retries": self._config.retry_config.max_retries,
-                    "backoff_factor": self._config.retry_config.backoff_factor,
+                    "max_retries": self._config.retry_config.max_retries
+                    if self._config.retry_config
+                    else 3,
+                    "backoff_factor": self._config.retry_config.backoff_factor
+                    if self._config.retry_config
+                    else 1.0,
                 },
             },
         )

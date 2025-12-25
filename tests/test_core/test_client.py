@@ -54,6 +54,7 @@ class TestTraciumClientInit:
         client = TraciumClient.init(api_key=test_api_key, config=config, transport=mock_transport)
         assert client._config.base_url == config.base_url
         assert client._config.timeout == config.timeout
+        assert client._config.retry_config is not None
         assert client._config.retry_config.max_retries == 5
         client.close()
 
@@ -105,7 +106,7 @@ class TestTraciumClientMethods:
             call_count += 1
             return {"plan": "pro"}
 
-        tracium_client._api.get_current_user = mock_get_current_user
+        tracium_client._api.get_current_user = mock_get_current_user  # type: ignore[method-assign]
 
         assert tracium_client.get_current_user()["plan"] == "pro"
         assert call_count == 1
@@ -118,5 +119,5 @@ class TestTraciumClientMethods:
         def mock_get_current_user():
             raise Exception("API error")
 
-        tracium_client._api.get_current_user = mock_get_current_user
+        tracium_client._api.get_current_user = mock_get_current_user  # type: ignore[method-assign]
         assert tracium_client.get_current_user()["plan"] == "free"

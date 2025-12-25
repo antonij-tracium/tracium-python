@@ -109,7 +109,12 @@ class TraciumAPIEndpoints:
             "Recording agent spans",
             extra={"trace_id": validated_trace_id, "span_count": len(validated_spans)},
         )
-        return self._http.post(f"/agents/traces/{validated_trace_id}/spans", json=payload)
+        result = self._http.post(f"/agents/traces/{validated_trace_id}/spans", json=payload)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "spans" in result and isinstance(result["spans"], list):
+            return result["spans"]
+        return [result]  # Fallback: wrap single dict in list
 
     def update_agent_span(
         self,
@@ -193,7 +198,12 @@ class TraciumAPIEndpoints:
             params["alert_channels"] = list(alert_channels)
         if workspace_id is not None:
             params["workspace_id"] = workspace_id
-        return self._http.post("/drift/check", params=params)
+        result = self._http.post("/drift/check", params=params)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
+            return result["results"]
+        return [result]  # Fallback: wrap single dict in list
 
     def trigger_prompt_embeddings_drift_check(
         self,
@@ -223,7 +233,12 @@ class TraciumAPIEndpoints:
             params["workspace_ids"] = list(workspace_ids)
         if alert_channels is not None:
             params["alert_channels"] = list(alert_channels)
-        return self._http.post("/drift/prompt-embeddings/check", params=params)
+        result = self._http.post("/drift/prompt-embeddings/check", params=params)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
+            return result["results"]
+        return [result]  # Fallback: wrap single dict in list
 
     def get_current_user(self) -> dict[str, Any]:
         """

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..core import TraciumClient
 from ..helpers.global_state import (
@@ -25,10 +25,13 @@ from ..helpers.global_state import (
 from ..instrumentation.auto_trace_tracker import get_or_create_auto_trace
 from ..models.trace_handle import AgentTraceHandle, AgentTraceManager
 
-try:
+if TYPE_CHECKING:
     from langchain_core.callbacks import BaseCallbackHandler
-except Exception:
-    BaseCallbackHandler = None
+else:
+    try:
+        from langchain_core.callbacks import BaseCallbackHandler
+    except Exception:
+        BaseCallbackHandler = None  # type: ignore[assignment,misc]
 
 
 @dataclass
@@ -185,7 +188,7 @@ if BaseCallbackHandler is not None:
             serialized_kwargs = serialized.get("kwargs", {})
             serialized_id = serialized.get("id", [])
 
-            return (
+            model_name: Any = (
                 invocation_params.get("model_name")
                 or invocation_params.get("model")
                 or serialized_kwargs.get("model_name")
@@ -194,6 +197,9 @@ if BaseCallbackHandler is not None:
                     serialized_id[-1] if isinstance(serialized_id, list) and serialized_id else None
                 )
             )
+            if model_name is None:
+                return None
+            return str(model_name)
 
         def _start_span(
             self,
@@ -464,12 +470,13 @@ if BaseCallbackHandler is not None:
                         }
                         if hasattr(choice, "message"):
                             message = choice.message
-                            choice_data["message"] = {
+                            choice_message_dict: dict[str, Any] = {
                                 "role": getattr(message, "role", "assistant"),
                                 "content": getattr(message, "content", ""),
                             }
+                            choice_data["message"] = choice_message_dict
                             if hasattr(message, "tool_calls") and message.tool_calls:
-                                choice_data["message"]["tool_calls"] = [
+                                choice_message_dict["tool_calls"] = [
                                     {
                                         "id": tc.id,
                                         "type": tc.type,
@@ -745,7 +752,7 @@ if BaseCallbackHandler is not None:
                             lc_run_id=run_id, owner_run_id=run_id, output_payload=payload
                         )
                     if tracked:
-                        summary = {"output": payload}
+                        summary: dict[str, Any] = {"output": payload}
                         if metadata:
                             summary["token_usage"] = metadata
                         tracked.handle.set_summary(summary)
@@ -999,7 +1006,7 @@ if BaseCallbackHandler is not None:
             self.on_text(text, run_id, parent_run_id, **kwargs)
 
 else:
-    TraciumLangChainHandler = None
+    TraciumLangChainHandler = None  # type: ignore[assignment,misc]
 
 
 def register_langchain_handler(client: TraciumClient) -> None:

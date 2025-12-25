@@ -32,8 +32,8 @@ class RetryConfig:
     backoff_factor: float = 1.0
     initial_delay: float = 0.1
     max_delay: float = 60.0
-    retryable_status_codes: set[int] = None
-    retryable_exceptions: tuple[type[Exception], ...] = None
+    retryable_status_codes: set[int] | None = None
+    retryable_exceptions: tuple[type[Exception], ...] | None = None
 
     def __post_init__(self) -> None:
         if self.retryable_status_codes is None:
@@ -65,9 +65,13 @@ def should_retry(
         True if the request should be retried, False otherwise
     """
     if exception is not None:
+        if config.retryable_exceptions is None:
+            return False
         return isinstance(exception, config.retryable_exceptions)
 
     if status_code is not None:
+        if config.retryable_status_codes is None:
+            return False
         return status_code in config.retryable_status_codes
 
     return False
@@ -114,7 +118,8 @@ def retry_with_backoff(
         try:
             result = func()
             if hasattr(result, "status_code") and should_retry(None, result.status_code, config):
-                result.raise_for_status()
+                if hasattr(result, "raise_for_status"):
+                    result.raise_for_status()
             return result
         except httpx.HTTPStatusError as e:
             last_exception = e

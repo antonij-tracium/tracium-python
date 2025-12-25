@@ -91,7 +91,7 @@ def register_flask_response_hook() -> None:
                     return response
 
                 flask.jsonify = patched_jsonify
-                flask._tracium_jsonify_patched = True
+                setattr(flask, "_tracium_jsonify_patched", True)
 
             if not hasattr(flask.Flask, "_tracium_exception_patched"):
                 original_handle_exception = flask.Flask.handle_exception

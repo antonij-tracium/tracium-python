@@ -211,7 +211,7 @@ class AgentSpanContext(contextlib.AbstractContextManager[AgentSpanHandle]):
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
         exc_tb: TracebackType | None,
-    ) -> bool | None:
+    ) -> None:
         if exc_type is not None and self._error is None:
             self._error = _format_exception(exc_type, exc_value, exc_tb)
         if exc_type is not None and self._status != "failed":
@@ -278,8 +278,6 @@ class AgentSpanContext(contextlib.AbstractContextManager[AgentSpanHandle]):
             self.last_payload = payload
         finally:
             self.state.pop_span()
-
-        return False
 
     def set_input(self, input_data: Any) -> None:
         self._input = input_data

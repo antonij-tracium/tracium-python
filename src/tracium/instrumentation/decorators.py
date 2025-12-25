@@ -98,10 +98,11 @@ def agent_trace(
             ) as trace_handle:
                 if inject_trace_arg:
                     kwargs = _inject_kwarg(kwargs, key=inject_trace_arg, value=trace_handle)  # type: ignore[assignment]
-                return await func(*args, **kwargs)
+                result = await func(*args, **kwargs)  # type: ignore[misc]
+                return result  # type: ignore[no-any-return]
 
         wrapper = functools.wraps(func)(_wrap_async if is_coroutine else _wrap)
-        return wrapper
+        return wrapper  # type: ignore[return-value]
 
     return decorator
 
@@ -156,7 +157,8 @@ def agent_span(
                     raise RuntimeError(
                         "agent_span decorated coroutine called outside an active Tracium agent trace.",
                     )
-                return await func(*args, **kwargs)
+                result = await func(*args, **kwargs)  # type: ignore[misc]
+                return result  # type: ignore[no-any-return]
 
             with trace_handle.span(
                 span_type=span_type,
@@ -166,13 +168,13 @@ def agent_span(
             ) as span_handle:
                 if inject_span_arg:
                     kwargs = _inject_kwarg(kwargs, key=inject_span_arg, value=span_handle)  # type: ignore[assignment]
-                result = await func(*args, **kwargs)
+                result = await func(*args, **kwargs)  # type: ignore[misc]
                 if capture_return:
                     span_handle.record_output({"return": result})
-                return result
+                return result  # type: ignore[no-any-return]
 
         wrapper = functools.wraps(func)(_call_async if is_coroutine else _call)
-        return wrapper
+        return wrapper  # type: ignore[return-value]
 
     return decorator
 

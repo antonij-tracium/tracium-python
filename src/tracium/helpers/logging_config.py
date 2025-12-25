@@ -79,7 +79,7 @@ def redact_sensitive_data(
         }
 
     sensitive_lower = {k.lower() for k in sensitive_keys}
-    redacted = {}
+    redacted: dict[str, Any] = {}
     for key, value in data.items():
         if key.lower() in sensitive_lower:
             redacted[key] = "***REDACTED***"

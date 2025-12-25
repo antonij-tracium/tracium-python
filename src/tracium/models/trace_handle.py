@@ -8,6 +8,7 @@ import contextlib
 import contextvars
 import uuid
 from collections.abc import Mapping, Sequence
+from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -119,6 +120,8 @@ class AgentTraceHandle:
             tags=self._state.tags or None,
         )
         self._state.finished = True
+        if not isinstance(payload, dict):
+            raise TypeError(f"Expected dict from complete_agent_trace, got {type(payload).__name__}")
         return payload
 
     def fail(
@@ -138,6 +141,8 @@ class AgentTraceHandle:
             error=error,
         )
         self._state.finished = True
+        if not isinstance(payload, dict):
+            raise TypeError(f"Expected dict from fail_agent_trace, got {type(payload).__name__}")
         return payload
 
     def span(
@@ -332,7 +337,7 @@ class AgentTraceManager(
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        exc_tb: type[BaseException] | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         state = self._state
         if state is None or state.finished:
@@ -366,8 +371,8 @@ class AgentTraceManager(
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        exc_tb: type[BaseException] | None,
-    ) -> bool | None:
+        exc_tb: TracebackType | None,
+    ) -> None:
         try:
             self._finish(exc_type, exc_value, exc_tb)
         finally:
@@ -375,12 +380,12 @@ class AgentTraceManager(
                 from ..context.trace_context import CURRENT_TRACE_STATE
 
                 CURRENT_TRACE_STATE.reset(self._token)
-        return False
 
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        exc_tb: type[BaseException] | None,
-    ) -> bool | None:
-        return self.__exit__(exc_type, exc_value, exc_tb)
+        exc_tb: TracebackType | None,
+    ) -> None:
+        # Call synchronous __exit__ since _finish is not async
+        self.__exit__(exc_type, exc_value, exc_tb)
