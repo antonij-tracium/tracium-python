@@ -7,11 +7,12 @@ repos:
         files: ^src/.*\.py$
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.4.1  
+    rev: v1.4.1
     hooks:
       - id: mypy
-        additional_dependencies: []
+        additional_dependencies: [ ".[all,dev]" ]
         files: ^src/.*\.py$
+
 
   - repo: local
     hooks:

@@ -133,31 +133,6 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
 
-[[tool.mypy.overrides]]
-module = [
-    "tracium.integrations.langchain",
-    "tracium.integrations.openai",
-    "tracium.integrations.google",
-    "tracium.integrations.langgraph",
-    "tracium.instrumentation.decorators",
-    "tracium.instrumentation.auto_trace_tracker",
-    "tracium.helpers.thread_helpers",
-    "tracium.context.context_propagation",
-    "tracium.api.http_client",
-    "tracium.api.endpoints",
-    "tracium.helpers.retry",
-    "tracium.helpers.retry_async",
-    "tracium.helpers.logging_config",
-    "tracium.helpers.security",
-    "tracium.models.span_handle",
-    "tracium.models.trace_handle",
-    "tracium.core.config",
-    "tracium.core.client",
-    "tracium.helpers.parallel_tracker",
-    "tracium.helpers.call_hierarchy",
-]
-ignore_errors = true
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
