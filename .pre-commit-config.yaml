@@ -12,7 +12,7 @@ repos:
       - id: mypy
         additional_dependencies: [".[all,dev]"]
         args: ["--install-types", "--non-interactive"]
-        files: ^src/.*\.py$
+
 
   - repo: local
     hooks:
