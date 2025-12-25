@@ -94,5 +94,3 @@ def patch_anthropic(client: TraciumClient) -> None:
             pass
 
     STATE.anthropic_patched = True
-
-

@@ -1,6 +1,7 @@
 """
 API endpoint methods for Tracium SDK.
 """
+
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -42,8 +43,14 @@ class TraciumAPIEndpoints:
     ) -> dict[str, Any]:
         from ..helpers.validation import validate_agent_name
 
-        validated_agent_name = _validate_and_log("start_agent_trace", validate_agent_name, agent_name)
-        validated_trace_id = _validate_and_log("start_agent_trace", validate_trace_id, trace_id) if trace_id else None
+        validated_agent_name = _validate_and_log(
+            "start_agent_trace", validate_agent_name, agent_name
+        )
+        validated_trace_id = (
+            _validate_and_log("start_agent_trace", validate_trace_id, trace_id)
+            if trace_id
+            else None
+        )
         validated_tags = _validate_and_log("start_agent_trace", validate_tags, tags)
 
         payload: dict[str, Any] = {"agent_name": validated_agent_name}
@@ -62,7 +69,10 @@ class TraciumAPIEndpoints:
         if tenant_id:
             payload["tenant_id"] = str(tenant_id)[:255]
 
-        logger.debug("Starting agent trace", extra={"agent_name": validated_agent_name, "trace_id": validated_trace_id})
+        logger.debug(
+            "Starting agent trace",
+            extra={"agent_name": validated_agent_name, "trace_id": validated_trace_id},
+        )
         return self._http.post("/agents/traces", json=payload)
 
     def record_agent_spans(
@@ -88,12 +98,17 @@ class TraciumAPIEndpoints:
                 validated_span["span_id"] = validate_span_id(str(validated_span["span_id"]))
                 del validated_span["span_id"]
             if "parent_span_id" in validated_span:
-                validated_span["parent_span_id"] = validate_span_id(str(validated_span["parent_span_id"]))
+                validated_span["parent_span_id"] = validate_span_id(
+                    str(validated_span["parent_span_id"])
+                )
                 del validated_span["parent_span_id"]
             validated_spans.append(validated_span)
 
         payload = {"spans": validated_spans}
-        logger.debug("Recording agent spans", extra={"trace_id": validated_trace_id, "span_count": len(validated_spans)})
+        logger.debug(
+            "Recording agent spans",
+            extra={"trace_id": validated_trace_id, "span_count": len(validated_spans)},
+        )
         return self._http.post(f"/agents/traces/{validated_trace_id}/spans", json=payload)
 
     def update_agent_span(
@@ -145,7 +160,9 @@ class TraciumAPIEndpoints:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         validated_trace_id = _validate_and_log("fail_agent_trace", validate_trace_id, trace_id)
-        validated_error = _validate_and_log("fail_agent_trace", validate_error_message, error) if error else None
+        validated_error = (
+            _validate_and_log("fail_agent_trace", validate_error_message, error) if error else None
+        )
 
         payload: dict[str, Any] = {}
         if validated_error:
@@ -216,9 +233,7 @@ class TraciumAPIEndpoints:
             Dict containing user info with 'plan' field (e.g., 'free', 'developer', 'startup', 'scale')
         """
         user_info = self._http.get("/auth/me")
-        return {
-            "plan": user_info.get("plan", "free")
-        }
+        return {"plan": user_info.get("plan", "free")}
 
     def get_gantt_data(self, trace_id: str) -> dict[str, Any]:
         """
@@ -240,4 +255,3 @@ class TraciumAPIEndpoints:
         validated_trace_id = _validate_and_log("get_gantt_data", validate_trace_id, trace_id)
         logger.debug("Fetching Gantt chart data", extra={"trace_id": validated_trace_id})
         return self._http.get(f"/agents/traces/{validated_trace_id}/gantt")
-

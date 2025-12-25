@@ -152,7 +152,9 @@ def _get_user_call_hierarchy() -> list[FrameInfo]:
                 "_handle",
             ]
 
-            is_web_handler = any(pattern in function_name.lower() for pattern in web_framework_patterns)
+            is_web_handler = any(
+                pattern in function_name.lower() for pattern in web_framework_patterns
+            )
             if is_web_handler:
                 frame = frame.f_back
                 continue

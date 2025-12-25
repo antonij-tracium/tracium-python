@@ -26,8 +26,7 @@ def extract_usage(usage: Any) -> tuple[int | None, int | None]:
         usage
         if isinstance(usage, dict)
         else (
-            getattr(usage, "model_dump", lambda: None)()
-            or getattr(usage, "dict", lambda: None)()
+            getattr(usage, "model_dump", lambda: None)() or getattr(usage, "dict", lambda: None)()
         )
     )
     if usage_dict:
@@ -63,5 +62,3 @@ def extract_output_data(response: Any) -> Any:
         except Exception:
             return str(response)
     return str(response)
-
-

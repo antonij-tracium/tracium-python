@@ -32,7 +32,7 @@ def get_fastapi_route_info() -> tuple[str, str] | None:
             if current is None:
                 break
             locals_dict = current.f_locals
-            for var_name in ['request', 'req', 'http_request']:
+            for var_name in ["request", "req", "http_request"]:
                 if var_name in locals_dict:
                     obj = locals_dict[var_name]
                     if isinstance(obj, StarletteRequest):
@@ -45,6 +45,7 @@ def get_fastapi_route_info() -> tuple[str, str] | None:
     if not request_obj:
         try:
             from starlette_context import context
+
             obj = context.get("request", None)
             if obj and isinstance(obj, StarletteRequest):
                 request_obj = obj
@@ -59,12 +60,14 @@ def get_fastapi_route_info() -> tuple[str, str] | None:
         return None
 
     route_name = None
-    if hasattr(request_obj, 'scope'):
+    if hasattr(request_obj, "scope"):
         route = request_obj.scope.get("route")
         if route:
-            route_name = getattr(route, 'name', None) or getattr(route, 'path', None)
+            route_name = getattr(route, "name", None) or getattr(route, "path", None)
 
-    display_name = route_name or (route_path.strip('/').replace('/', '-') if route_path != '/' else 'index')
+    display_name = route_name or (
+        route_path.strip("/").replace("/", "-") if route_path != "/" else "index"
+    )
     return route_path, display_name
 
 
@@ -75,14 +78,14 @@ def register_fastapi_response_hook() -> None:
 
         from ..auto_trace_tracker import close_web_trace_on_request_completion
 
-        if hasattr(Response, '_tracium_response_patched'):
+        if hasattr(Response, "_tracium_response_patched"):
             return
 
         original_init = Response.__init__
 
         def patched_init(self, *args, **kwargs):
             original_init(self, *args, **kwargs)
-            if not hasattr(self, '_tracium_trace_closed'):
+            if not hasattr(self, "_tracium_trace_closed"):
                 self._tracium_trace_closed = True
                 close_web_trace_on_request_completion()
 
@@ -90,16 +93,21 @@ def register_fastapi_response_hook() -> None:
 
         try:
             from starlette.applications import Starlette
-            if not hasattr(Starlette, '_tracium_exception_patched'):
+
+            if not hasattr(Starlette, "_tracium_exception_patched"):
                 original_exception_handler = Starlette.exception_handler
 
                 def patched_exception_handler(self, exc_class_or_status_code, handler=None):
                     if handler is None:
                         return original_exception_handler(self, exc_class_or_status_code)
+
                     async def wrapped_handler(request, exc):
                         close_web_trace_on_request_completion(error=exc)
                         return await handler(request, exc)
-                    return original_exception_handler(self, exc_class_or_status_code, wrapped_handler)
+
+                    return original_exception_handler(
+                        self, exc_class_or_status_code, wrapped_handler
+                    )
 
                 Starlette.exception_handler = patched_exception_handler
                 Starlette._tracium_exception_patched = True
@@ -111,4 +119,3 @@ def register_fastapi_response_hook() -> None:
         pass
     except Exception:
         pass
-

@@ -24,19 +24,30 @@ def _extract_chunk_content(chunk: Any) -> str | None:
     return None
 
 
-def _finalize_stream(span_handle: Any, span_context: Any, text_parts: list[str], tokens: tuple[int | None, int | None, int | None]) -> None:
+def _finalize_stream(
+    span_handle: Any,
+    span_context: Any,
+    text_parts: list[str],
+    tokens: tuple[int | None, int | None, int | None],
+) -> None:
     """Finalize stream processing: record output, tokens, and close span."""
     span_handle.record_output("".join(text_parts) or "(streaming response)")
     input_tokens, output_tokens, cached_input_tokens = tokens
     if any(t is not None for t in tokens):
-        span_handle.set_token_usage(input_tokens=input_tokens, output_tokens=output_tokens, cached_input_tokens=cached_input_tokens)
+        span_handle.set_token_usage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_input_tokens=cached_input_tokens,
+        )
     span_context.__exit__(None, None, None)
     from ..instrumentation.auto_trace_tracker import _get_web_route_info, close_auto_trace_if_needed
+
     close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
 
 
 class StreamWrapper:
     """Wrapper for OpenAI streaming responses that intercepts chunks."""
+
     def __init__(self, original_stream: Any, span_handle: Any, span_context: Any):
         self._stream = original_stream
         self._span_handle = span_handle
@@ -65,6 +76,7 @@ class StreamWrapper:
 
 class AsyncStreamWrapper:
     """Wrapper for OpenAI async streaming responses that intercepts chunks."""
+
     def __init__(self, original_stream: Any, span_handle: Any, span_context: Any):
         self._stream = original_stream
         self._span_handle = span_handle
@@ -104,6 +116,7 @@ def _normalize_prompt(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | di
 def _extract_model(kwargs: dict[str, Any]) -> str | None:
     return kwargs.get("model") if isinstance(kwargs.get("model"), str) else None
 
+
 def patch_openai(client: TraciumClient) -> None:
     """Patch the OpenAI SDK to automatically trace all OpenAI API calls."""
     if STATE.openai_patched:
@@ -113,6 +126,7 @@ def patch_openai(client: TraciumClient) -> None:
     try:
         if openai is None:
             import openai as imported_openai
+
             openai = imported_openai
         openai_module = openai
     except Exception:
@@ -124,11 +138,18 @@ def patch_openai(client: TraciumClient) -> None:
         try:
             original = namespace.create
             if is_async:
+
                 async def traced(*args: Any, **kwargs: Any) -> Any:
-                    return await _trace_openai_call_async(client, lambda: original(*args, **kwargs), args, kwargs)
+                    return await _trace_openai_call_async(
+                        client, lambda: original(*args, **kwargs), args, kwargs
+                    )
             else:
+
                 def traced(*args: Any, **kwargs: Any) -> Any:
-                    return _trace_openai_call(client, lambda: original(*args, **kwargs), args, kwargs)
+                    return _trace_openai_call(
+                        client, lambda: original(*args, **kwargs), args, kwargs
+                    )
+
             setattr(namespace, "create", traced)
         except Exception:
             pass
@@ -145,14 +166,18 @@ def patch_openai(client: TraciumClient) -> None:
 def _handle_error(e: Exception, span_handle: Any, span_context: Any) -> None:
     """Handle error in trace: record error, mark failed, and close span."""
     import traceback
-    span_handle.record_output({"error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()})
+
+    span_handle.record_output(
+        {"error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()}
+    )
     span_handle.mark_failed(str(e))
     from ..instrumentation.auto_trace_tracker import (
         _get_web_route_info,
         close_auto_trace_if_needed,
         get_current_auto_trace_context,
     )
-    if (ctx := get_current_auto_trace_context()):
+
+    if ctx := get_current_auto_trace_context():
         ctx.mark_span_failed()
     close_auto_trace_if_needed(force_close=_get_web_route_info() is not None, error=e)
     span_context.__exit__(type(e), e, e.__traceback__)
@@ -163,8 +188,11 @@ def _is_streaming(response: Any, kwargs: dict[str, Any], is_async: bool = False)
     if kwargs.get("stream", False):
         return True
     iter_attr = "__aiter__" if is_async else "__iter__"
-    return (hasattr(response, iter_attr) and not hasattr(response, "usage")
-            and not isinstance(response, (str | bytes | dict | list)))
+    return (
+        hasattr(response, iter_attr)
+        and not hasattr(response, "usage")
+        and not isinstance(response, (str | bytes | dict | list))
+    )
 
 
 def _trace_openai_call(
@@ -189,16 +217,26 @@ def _trace_openai_call(
     model_id = _extract_model(kwargs) or options.default_model_id
 
     trace_handle, _ = get_or_create_auto_trace(
-        client=client, agent_name=options.default_agent_name or "app",
-        model_id=model_id, tags=get_default_tags(["@openai"]),
+        client=client,
+        agent_name=options.default_agent_name or "app",
+        model_id=model_id,
+        tags=get_default_tags(["@openai"]),
     )
 
-    parent_span_id, span_name = get_or_create_function_span(trace_handle, get_current_function_for_span())
-    span_context = trace_handle.span(span_type="llm", name=span_name, model_id=model_id, parent_span_id=parent_span_id)
+    parent_span_id, span_name = get_or_create_function_span(
+        trace_handle, get_current_function_for_span()
+    )
+    span_context = trace_handle.span(
+        span_type="llm", name=span_name, model_id=model_id, parent_span_id=parent_span_id
+    )
     span_handle = span_context.__enter__()
 
     if prompt_payload:
-        span_handle.record_input(prompt_payload["messages"] if isinstance(prompt_payload, dict) and "messages" in prompt_payload else prompt_payload)
+        span_handle.record_input(
+            prompt_payload["messages"]
+            if isinstance(prompt_payload, dict) and "messages" in prompt_payload
+            else prompt_payload
+        )
 
     try:
         response = original_fn()
@@ -211,10 +249,13 @@ def _trace_openai_call(
 
     tokens = _extract_token_usage(response)
     if any(tokens):
-        span_handle.set_token_usage(input_tokens=tokens[0], output_tokens=tokens[1], cached_input_tokens=tokens[2])
+        span_handle.set_token_usage(
+            input_tokens=tokens[0], output_tokens=tokens[1], cached_input_tokens=tokens[2]
+        )
     span_handle.record_output(_extract_output_data(response))
     span_context.__exit__(None, None, None)
     from ..instrumentation.auto_trace_tracker import _get_web_route_info, close_auto_trace_if_needed
+
     close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
     return response
 
@@ -241,16 +282,26 @@ async def _trace_openai_call_async(
     model_id = _extract_model(kwargs) or options.default_model_id
 
     trace_handle, _ = get_or_create_auto_trace(
-        client=client, agent_name=options.default_agent_name or "app",
-        model_id=model_id, tags=get_default_tags(["@openai"]),
+        client=client,
+        agent_name=options.default_agent_name or "app",
+        model_id=model_id,
+        tags=get_default_tags(["@openai"]),
     )
 
-    parent_span_id, span_name = get_or_create_function_span(trace_handle, get_current_function_for_span())
-    span_context = trace_handle.span(span_type="llm", name=span_name, model_id=model_id, parent_span_id=parent_span_id)
+    parent_span_id, span_name = get_or_create_function_span(
+        trace_handle, get_current_function_for_span()
+    )
+    span_context = trace_handle.span(
+        span_type="llm", name=span_name, model_id=model_id, parent_span_id=parent_span_id
+    )
     span_handle = span_context.__enter__()
 
     if prompt_payload:
-        span_handle.record_input(prompt_payload["messages"] if isinstance(prompt_payload, dict) and "messages" in prompt_payload else prompt_payload)
+        span_handle.record_input(
+            prompt_payload["messages"]
+            if isinstance(prompt_payload, dict) and "messages" in prompt_payload
+            else prompt_payload
+        )
 
     try:
         response = await original_fn()
@@ -263,10 +314,13 @@ async def _trace_openai_call_async(
 
     tokens = _extract_token_usage(response)
     if any(tokens):
-        span_handle.set_token_usage(input_tokens=tokens[0], output_tokens=tokens[1], cached_input_tokens=tokens[2])
+        span_handle.set_token_usage(
+            input_tokens=tokens[0], output_tokens=tokens[1], cached_input_tokens=tokens[2]
+        )
     span_handle.record_output(_extract_output_data(response))
     span_context.__exit__(None, None, None)
     from ..instrumentation.auto_trace_tracker import _get_web_route_info, close_auto_trace_if_needed
+
     close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
     return response
 
@@ -283,13 +337,29 @@ def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | N
         try:
             usage_dict = usage.model_dump()
         except Exception:
-            usage_dict = {attr: getattr(usage, attr) for attr in
-                         ["prompt_tokens", "completion_tokens", "input_tokens", "output_tokens", "cached_input_tokens"]
-                         if hasattr(usage, attr) and getattr(usage, attr) is not None}
+            usage_dict = {
+                attr: getattr(usage, attr)
+                for attr in [
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "input_tokens",
+                    "output_tokens",
+                    "cached_input_tokens",
+                ]
+                if hasattr(usage, attr) and getattr(usage, attr) is not None
+            }
     else:
-        usage_dict = {attr: getattr(usage, attr) for attr in
-                     ["prompt_tokens", "completion_tokens", "input_tokens", "output_tokens", "cached_input_tokens"]
-                     if hasattr(usage, attr) and getattr(usage, attr) is not None}
+        usage_dict = {
+            attr: getattr(usage, attr)
+            for attr in [
+                "prompt_tokens",
+                "completion_tokens",
+                "input_tokens",
+                "output_tokens",
+                "cached_input_tokens",
+            ]
+            if hasattr(usage, attr) and getattr(usage, attr) is not None
+        }
 
     def safe_int(val: Any) -> int | None:
         try:

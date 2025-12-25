@@ -20,11 +20,11 @@ def get_celery_task_info() -> tuple[str, str] | None:
         if not task or not task.request:
             return None
 
-        task_name = getattr(task, 'name', None) or getattr(task.request, 'task', None)
+        task_name = getattr(task, "name", None) or getattr(task.request, "task", None)
         if not task_name:
             return None
 
-        display_name = task_name.split('.')[-1].replace('_', '-')
+        display_name = task_name.split(".")[-1].replace("_", "-")
         task_path = f"/celery/{display_name}"
 
         return task_path, display_name
@@ -32,4 +32,3 @@ def get_celery_task_info() -> tuple[str, str] | None:
         return None
     except Exception:
         return None
-

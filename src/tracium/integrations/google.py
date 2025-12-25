@@ -199,6 +199,7 @@ def _trace_google_call(
             span_handle.mark_failed(str(e))
 
             from ..instrumentation.auto_trace_tracker import get_current_auto_trace_context
+
             auto_context = get_current_auto_trace_context()
             if auto_context:
                 auto_context.mark_span_failed()
@@ -207,6 +208,7 @@ def _trace_google_call(
                 _get_web_route_info,
                 close_auto_trace_if_needed,
             )
+
             is_web_context = _get_web_route_info() is not None
             close_auto_trace_if_needed(force_close=is_web_context, error=error_occurred)
 
@@ -233,6 +235,7 @@ def _trace_google_call(
             _get_web_route_info,
             close_auto_trace_if_needed,
         )
+
         is_web_context = _get_web_route_info() is not None
         close_auto_trace_if_needed(force_close=is_web_context)
 
@@ -281,6 +284,7 @@ async def _trace_google_call_async(
         span_context.__exit__(type(exc), exc, exc.__traceback__)
 
         from ..instrumentation.auto_trace_tracker import get_current_auto_trace_context
+
         auto_context = get_current_auto_trace_context()
         if auto_context:
             auto_context.mark_span_failed()
@@ -289,6 +293,7 @@ async def _trace_google_call_async(
             _get_web_route_info,
             close_auto_trace_if_needed,
         )
+
         is_web_context = _get_web_route_info() is not None
         close_auto_trace_if_needed(force_close=is_web_context, error=error_occurred)
 
@@ -313,6 +318,7 @@ async def _trace_google_call_async(
     span_context.__exit__(None, None, None)
 
     from ..instrumentation.auto_trace_tracker import _get_web_route_info, close_auto_trace_if_needed
+
     is_web_context = _get_web_route_info() is not None
     close_auto_trace_if_needed(force_close=is_web_context)
 

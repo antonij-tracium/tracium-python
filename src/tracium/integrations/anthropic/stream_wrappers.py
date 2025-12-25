@@ -9,6 +9,7 @@ from .utils import extract_usage
 
 class TextStreamWrapper:
     """Wrapper for text_stream that intercepts text chunks."""
+
     def __init__(self, original_text_stream: Any, text_parts: list[str]):
         self._text_stream = original_text_stream
         self._text_parts = text_parts
@@ -25,6 +26,7 @@ class TextStreamWrapper:
 
 class AsyncTextStreamWrapper:
     """Wrapper for async text_stream that intercepts text chunks."""
+
     def __init__(self, original_text_stream: Any, text_parts: list[str]):
         self._text_stream = original_text_stream
         self._text_parts = text_parts
@@ -41,6 +43,7 @@ class AsyncTextStreamWrapper:
 
 class StreamWrapper:
     """Wrapper for the actual stream object that intercepts chunks."""
+
     def __init__(self, original_stream: Any, span_handle: Any, span_context: Any):
         self._stream = original_stream
         self._span_handle = span_handle
@@ -81,20 +84,26 @@ class StreamWrapper:
 
             return chunk
         except StopIteration:
-            self._span_handle.record_output("".join(self._text_parts) if self._text_parts else "(streaming response)")
+            self._span_handle.record_output(
+                "".join(self._text_parts) if self._text_parts else "(streaming response)"
+            )
             if self._input_tokens is not None or self._output_tokens is not None:
-                self._span_handle.set_token_usage(input_tokens=self._input_tokens, output_tokens=self._output_tokens)
+                self._span_handle.set_token_usage(
+                    input_tokens=self._input_tokens, output_tokens=self._output_tokens
+                )
             self._span_context.__exit__(None, None, None)
             from ...instrumentation.auto_trace_tracker import (
                 _get_web_route_info,
                 close_auto_trace_if_needed,
             )
+
             close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
             raise
 
 
 class AsyncStreamWrapper:
     """Wrapper for the actual async stream object that intercepts chunks."""
+
     def __init__(self, original_stream: Any, span_handle: Any, span_context: Any):
         self._stream = original_stream
         self._span_handle = span_handle
@@ -135,15 +144,18 @@ class AsyncStreamWrapper:
 
             return chunk
         except StopAsyncIteration:
-            self._span_handle.record_output("".join(self._text_parts) if self._text_parts else "(streaming response)")
+            self._span_handle.record_output(
+                "".join(self._text_parts) if self._text_parts else "(streaming response)"
+            )
             if self._input_tokens is not None or self._output_tokens is not None:
-                self._span_handle.set_token_usage(input_tokens=self._input_tokens, output_tokens=self._output_tokens)
+                self._span_handle.set_token_usage(
+                    input_tokens=self._input_tokens, output_tokens=self._output_tokens
+                )
             self._span_context.__exit__(None, None, None)
             from ...instrumentation.auto_trace_tracker import (
                 _get_web_route_info,
                 close_auto_trace_if_needed,
             )
+
             close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
             raise
-
-

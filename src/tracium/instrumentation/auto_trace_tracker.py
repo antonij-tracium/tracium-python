@@ -63,7 +63,9 @@ _WEB_FRAMEWORK_PATTERNS = {
 }
 
 
-def _close_trace_safely(context: AutoTraceContext | None, error: BaseException | None = None) -> None:
+def _close_trace_safely(
+    context: AutoTraceContext | None, error: BaseException | None = None
+) -> None:
     """
     Safely close a trace context, ignoring any errors.
     Args:
@@ -80,7 +82,9 @@ def _close_trace_safely(context: AutoTraceContext | None, error: BaseException |
             context.trace_manager.__exit__(type(error), error, error.__traceback__)
         elif should_mark_failed and not context.trace_handle._state.finished:
             try:
-                error_msg = context.trace_handle._state.error or "One or more spans in this trace failed"
+                error_msg = (
+                    context.trace_handle._state.error or "One or more spans in this trace failed"
+                )
                 context.trace_handle.mark_failed(error_msg)
             except Exception:
                 pass
@@ -138,6 +142,7 @@ def _exception_handler(exc_type, exc_value, exc_traceback) -> None:
             _ORIGINAL_EXCEPTHOOK(exc_type, exc_value, exc_traceback)
         except Exception:
             import sys
+
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
 
@@ -255,12 +260,7 @@ def _get_user_frames() -> list[tuple]:
             func_name = frame.f_code.co_name
 
             if not any(pattern in filename for pattern in _SKIP_PATTERNS):
-                user_frames.append((
-                    func_name,
-                    filename,
-                    frame.f_lineno,
-                    id(frame)
-                ))
+                user_frames.append((func_name, filename, frame.f_lineno, id(frame)))
             frame = frame.f_back
     finally:
         del frame
@@ -435,6 +435,7 @@ def get_or_create_auto_trace(
 
     if entry_frame_id.startswith("web:"):
         from .web_frameworks import register_response_hooks
+
         try:
             register_response_hooks()
         except Exception:
@@ -534,7 +535,9 @@ def should_close_auto_trace(force_close: bool = False) -> bool:
     return current_frame_id != auto_context.entry_frame_id
 
 
-def close_auto_trace_if_needed(force_close: bool = False, error: BaseException | None = None) -> None:
+def close_auto_trace_if_needed(
+    force_close: bool = False, error: BaseException | None = None
+) -> None:
     """
     Close the auto-created trace if we've exited the workflow.
     Args:

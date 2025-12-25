@@ -19,7 +19,9 @@ from .stream_wrappers import AsyncStreamWrapper, StreamWrapper
 from .utils import extract_model, extract_output_data, extract_usage, normalize_messages
 
 
-def _create_trace_and_span(client: TraciumClient, args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[Any, Any, Any]:
+def _create_trace_and_span(
+    client: TraciumClient, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[Any, Any, Any]:
     """Create trace and span for API call."""
     options = get_options()
     messages_payload = normalize_messages(args, kwargs)
@@ -44,7 +46,11 @@ def _create_trace_and_span(client: TraciumClient, args: tuple[Any, ...], kwargs:
     span_handle = span_context.__enter__()
 
     if messages_payload is not None:
-        payload = messages_payload["messages"] if isinstance(messages_payload, dict) and "messages" in messages_payload else messages_payload
+        payload = (
+            messages_payload["messages"]
+            if isinstance(messages_payload, dict) and "messages" in messages_payload
+            else messages_payload
+        )
         span_handle.record_input(payload)
 
     return trace_handle, span_handle, span_context
@@ -66,11 +72,13 @@ def trace_anthropic_call(
     try:
         response = original_fn()
     except Exception as e:
-        span_handle.record_output({
-            "error": str(e),
-            "error_type": type(e).__name__,
-            "traceback": traceback.format_exc(),
-        })
+        span_handle.record_output(
+            {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "traceback": traceback.format_exc(),
+            }
+        )
         span_handle.mark_failed(str(e))
 
         auto_context = get_current_auto_trace_context()
@@ -132,5 +140,3 @@ async def trace_anthropic_call_async(
     close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
 
     return response
-
-

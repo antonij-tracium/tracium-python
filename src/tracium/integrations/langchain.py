@@ -41,6 +41,7 @@ class _TrackedTrace:
 @dataclass
 class _StreamBuffer:
     """Buffer for accumulating streaming text."""
+
     chunks: list[str]
 
     def add_chunk(self, chunk: str) -> None:
@@ -157,6 +158,7 @@ if BaseCallbackHandler is not None:
             if error:
                 handle.mark_failed(str(error))
                 from ..instrumentation.auto_trace_tracker import get_current_auto_trace_context
+
                 auto_context = get_current_auto_trace_context()
                 if auto_context:
                     auto_context.mark_span_failed()
@@ -171,13 +173,12 @@ if BaseCallbackHandler is not None:
                     _get_web_route_info,
                     close_auto_trace_if_needed,
                 )
+
                 is_web_context = _get_web_route_info() is not None
                 close_auto_trace_if_needed(force_close=is_web_context, error=error)
 
         def _extract_model_id(
-            self,
-            serialized: dict[str, Any],
-            kwargs: dict[str, Any]
+            self, serialized: dict[str, Any], kwargs: dict[str, Any]
         ) -> str | None:
             """Extract model ID from various possible locations."""
             invocation_params = kwargs.get("invocation_params", {})
@@ -189,7 +190,9 @@ if BaseCallbackHandler is not None:
                 or invocation_params.get("model")
                 or serialized_kwargs.get("model_name")
                 or serialized_kwargs.get("model")
-                or (serialized_id[-1] if isinstance(serialized_id, list) and serialized_id else None)
+                or (
+                    serialized_id[-1] if isinstance(serialized_id, list) and serialized_id else None
+                )
             )
 
         def _start_span(
@@ -292,7 +295,7 @@ if BaseCallbackHandler is not None:
                 kind="chain",
                 name=chain_name,
                 input_payload=inputs,
-                metadata={"chain_type": str(node_id)}
+                metadata={"chain_type": str(node_id)},
             )
 
         async def on_chain_start_async(
@@ -366,6 +369,7 @@ if BaseCallbackHandler is not None:
 
             try:
                 from langchain_core.messages import BaseMessage
+
                 if isinstance(obj, BaseMessage):
                     message_dict: dict[str, Any] = {
                         "type": obj.__class__.__name__,
@@ -393,12 +397,16 @@ if BaseCallbackHandler is not None:
                         additional_fields["tool_call_id"] = str(obj.tool_call_id)
                     if hasattr(obj, "response_metadata") and obj.response_metadata:
                         try:
-                            additional_fields["response_metadata"] = self._serialize_input(obj.response_metadata)
+                            additional_fields["response_metadata"] = self._serialize_input(
+                                obj.response_metadata
+                            )
                         except Exception:
                             pass
                     if hasattr(obj, "additional_kwargs") and obj.additional_kwargs:
                         try:
-                            additional_fields["additional_kwargs"] = self._serialize_input(obj.additional_kwargs)
+                            additional_fields["additional_kwargs"] = self._serialize_input(
+                                obj.additional_kwargs
+                            )
                         except Exception:
                             pass
 
@@ -409,6 +417,7 @@ if BaseCallbackHandler is not None:
 
             try:
                 from langchain_core.documents import Document
+
                 if isinstance(obj, Document):
                     doc_dict: dict[str, Any] = {
                         "type": "Document",
@@ -422,6 +431,7 @@ if BaseCallbackHandler is not None:
 
             try:
                 from langchain_core.agents import AgentAction
+
                 if isinstance(obj, AgentAction):
                     return {
                         "type": "AgentAction",
@@ -434,6 +444,7 @@ if BaseCallbackHandler is not None:
 
             try:
                 from langchain_core.agents import AgentFinish
+
                 if isinstance(obj, AgentFinish):
                     return {
                         "type": "AgentFinish",
@@ -510,7 +521,7 @@ if BaseCallbackHandler is not None:
             prompts: list[str],
             run_id: str,
             parent_run_id: str | None = None,
-            **kwargs: Any
+            **kwargs: Any,
         ) -> None:
             """Handle traditional completion LLM calls."""
             add_langchain_active_run(run_id)
@@ -521,9 +532,7 @@ if BaseCallbackHandler is not None:
                 with self._lock:
                     if owner not in self._root_traces:
                         self._create_trace(
-                            run_id=owner,
-                            serialized=serialized or {},
-                            inputs={"prompts": prompts}
+                            run_id=owner, serialized=serialized or {}, inputs={"prompts": prompts}
                         )
 
             model_id = self._extract_model_id(serialized, kwargs)
@@ -710,9 +719,7 @@ if BaseCallbackHandler is not None:
             def _set_token_usage_if_present(span_handle: Any) -> None:
                 if metadata:
                     token_kwargs = {
-                        k: metadata[k]
-                        for k in ("input_tokens", "output_tokens")
-                        if k in metadata
+                        k: metadata[k] for k in ("input_tokens", "output_tokens") if k in metadata
                     }
                     if token_kwargs:
                         span_handle.set_token_usage(**token_kwargs)
@@ -734,7 +741,9 @@ if BaseCallbackHandler is not None:
                     if span_entry:
                         _, span_handle = span_entry
                         _set_token_usage_if_present(span_handle)
-                        self._finish_span(lc_run_id=run_id, owner_run_id=run_id, output_payload=payload)
+                        self._finish_span(
+                            lc_run_id=run_id, owner_run_id=run_id, output_payload=payload
+                        )
                     if tracked:
                         summary = {"output": payload}
                         if metadata:
@@ -820,11 +829,7 @@ if BaseCallbackHandler is not None:
             self.on_tool_error(error, run_id, parent_run_id, **kwargs)
 
         def on_agent_action(
-            self,
-            action: Any,
-            run_id: str,
-            parent_run_id: str | None = None,
-            **kwargs: Any
+            self, action: Any, run_id: str, parent_run_id: str | None = None, **kwargs: Any
         ) -> None:
             """Handle agent action decisions."""
             owner = self._trace_mapping.get(parent_run_id or run_id, parent_run_id or run_id)
@@ -837,41 +842,31 @@ if BaseCallbackHandler is not None:
                 kind="agent_action",
                 name=f"agent_action_{tool_name}",
                 input_payload=self._serialize_input(action),
-                metadata={"tool": tool_name}
+                metadata={"tool": tool_name},
             )
 
         async def on_agent_action_async(
-            self,
-            action: Any,
-            run_id: str,
-            parent_run_id: str | None = None,
-            **kwargs: Any
+            self, action: Any, run_id: str, parent_run_id: str | None = None, **kwargs: Any
         ) -> None:
             self.on_agent_action(action, run_id, parent_run_id, **kwargs)
 
         def on_agent_finish(
-            self,
-            finish: Any,
-            run_id: str,
-            parent_run_id: str | None = None,
-            **kwargs: Any
+            self, finish: Any, run_id: str, parent_run_id: str | None = None, **kwargs: Any
         ) -> None:
             """Handle agent finishing."""
             with self._lock:
                 if run_id in self._active_spans:
-                    owner = self._trace_mapping.get(parent_run_id or run_id, parent_run_id or run_id)
+                    owner = self._trace_mapping.get(
+                        parent_run_id or run_id, parent_run_id or run_id
+                    )
                     self._finish_span(
                         lc_run_id=run_id,
                         owner_run_id=owner,
-                        output_payload=self._serialize_input(finish)
+                        output_payload=self._serialize_input(finish),
                     )
 
         async def on_agent_finish_async(
-            self,
-            finish: Any,
-            run_id: str,
-            parent_run_id: str | None = None,
-            **kwargs: Any
+            self, finish: Any, run_id: str, parent_run_id: str | None = None, **kwargs: Any
         ) -> None:
             self.on_agent_finish(finish, run_id, parent_run_id, **kwargs)
 
@@ -891,7 +886,7 @@ if BaseCallbackHandler is not None:
                 kind="retriever",
                 name=serialized.get("name", "retriever"),
                 input_payload={"query": query},
-                metadata={"retriever_type": serialized.get("id", ["unknown"])}
+                metadata={"retriever_type": serialized.get("id", ["unknown"])},
             )
 
         async def on_retriever_start_async(
@@ -916,14 +911,10 @@ if BaseCallbackHandler is not None:
 
             output_payload = {
                 "documents": self._serialize_input(documents),
-                "num_documents": len(documents)
+                "num_documents": len(documents),
             }
 
-            self._finish_span(
-                lc_run_id=run_id,
-                owner_run_id=owner,
-                output_payload=output_payload
-            )
+            self._finish_span(lc_run_id=run_id, owner_run_id=owner, output_payload=output_payload)
             with self._lock:
                 self._trace_mapping.pop(run_id, None)
 
@@ -973,7 +964,7 @@ if BaseCallbackHandler is not None:
                     if hasattr(span_handle, "set_metadata"):
                         retry_info = {
                             "retry_count": getattr(retry_state, "attempt_number", 0),
-                            "retry_reason": str(getattr(retry_state, "outcome", "unknown"))
+                            "retry_reason": str(getattr(retry_state, "outcome", "unknown")),
                         }
                         span_handle.set_metadata({"retry": retry_info})
 

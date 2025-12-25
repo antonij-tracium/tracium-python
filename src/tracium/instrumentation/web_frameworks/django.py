@@ -53,7 +53,9 @@ def get_django_route_info() -> tuple[str, str] | None:
     view_name = None
     resolver_match = getattr(request_obj, "resolver_match", None)
     if resolver_match:
-        view_name = getattr(resolver_match, "view_name", None) or getattr(resolver_match, "url_name", None)
+        view_name = getattr(resolver_match, "view_name", None) or getattr(
+            resolver_match, "url_name", None
+        )
         if not view_name:
             func = getattr(resolver_match, "func", None)
             if func:

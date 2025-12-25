@@ -59,4 +59,3 @@ def register_response_hooks() -> None:
         register_django_response_hook()
     except Exception:
         pass
-
