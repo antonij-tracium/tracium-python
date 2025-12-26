@@ -319,7 +319,9 @@ if BaseCallbackHandler is not None:
             parent_run_id: UUID | None = None,
             **kwargs: Any,
         ) -> None:
-            self.on_chain_start(serialized, inputs, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
+            self.on_chain_start(
+                serialized, inputs, run_id=run_id, parent_run_id=parent_run_id, **kwargs
+            )
 
         def on_chain_end(
             self,
@@ -356,7 +358,12 @@ if BaseCallbackHandler is not None:
             self.on_chain_end(outputs, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
 
         def on_chain_error(
-            self, error: BaseException, *, run_id: UUID, parent_run_id: UUID | None = None, **kwargs: Any
+            self,
+            error: BaseException,
+            *,
+            run_id: UUID,
+            parent_run_id: UUID | None = None,
+            **kwargs: Any,
         ) -> None:
             run_id_str = str(run_id)
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
@@ -371,7 +378,12 @@ if BaseCallbackHandler is not None:
                     self._trace_mapping.pop(run_id_str, None)
 
         async def on_chain_error_async(
-            self, error: BaseException, *, run_id: UUID, parent_run_id: UUID | None = None, **kwargs: Any
+            self,
+            error: BaseException,
+            *,
+            run_id: UUID,
+            parent_run_id: UUID | None = None,
+            **kwargs: Any,
         ) -> None:
             self.on_chain_error(error, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
 
@@ -549,7 +561,9 @@ if BaseCallbackHandler is not None:
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
             add_langchain_active_run(run_id_str)
 
-            owner = self._trace_mapping.get(parent_run_id_str or run_id_str, parent_run_id_str or run_id_str)
+            owner = self._trace_mapping.get(
+                parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
+            )
 
             if not parent_run_id_str:
                 with self._lock:
@@ -578,7 +592,9 @@ if BaseCallbackHandler is not None:
             parent_run_id: UUID | None = None,
             **kwargs: Any,
         ) -> None:
-            self.on_llm_start(serialized, prompts, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
+            self.on_llm_start(
+                serialized, prompts, run_id=run_id, parent_run_id=parent_run_id, **kwargs
+            )
 
         def on_chat_model_start(
             self,
@@ -593,7 +609,9 @@ if BaseCallbackHandler is not None:
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
             add_langchain_active_run(run_id_str)
 
-            owner = self._trace_mapping.get(parent_run_id_str or run_id_str, parent_run_id_str or run_id_str)
+            owner = self._trace_mapping.get(
+                parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
+            )
             if not parent_run_id_str:
                 with self._lock:
                     if owner not in self._root_traces:
@@ -622,7 +640,9 @@ if BaseCallbackHandler is not None:
             parent_run_id: UUID | None = None,
             **kwargs: Any,
         ) -> None:
-            self.on_chat_model_start(serialized, messages, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
+            self.on_chat_model_start(
+                serialized, messages, run_id=run_id, parent_run_id=parent_run_id, **kwargs
+            )
 
         def on_llm_new_token(
             self,
@@ -794,18 +814,30 @@ if BaseCallbackHandler is not None:
             self.on_llm_end(response, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
 
         def on_llm_error(
-            self, error: BaseException, *, run_id: UUID, parent_run_id: UUID | None = None, **kwargs: Any
+            self,
+            error: BaseException,
+            *,
+            run_id: UUID,
+            parent_run_id: UUID | None = None,
+            **kwargs: Any,
         ) -> None:
             run_id_str = str(run_id)
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
-            owner = self._trace_mapping.get(parent_run_id_str or run_id_str, parent_run_id_str or run_id_str)
+            owner = self._trace_mapping.get(
+                parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
+            )
             self._finish_span(lc_run_id=run_id_str, owner_run_id=owner, error=error)
             with self._lock:
                 self._trace_mapping.pop(run_id_str, None)
             remove_langchain_active_run(run_id_str)
 
         async def on_llm_error_async(
-            self, error: BaseException, *, run_id: UUID, parent_run_id: UUID | None = None, **kwargs: Any
+            self,
+            error: BaseException,
+            *,
+            run_id: UUID,
+            parent_run_id: UUID | None = None,
+            **kwargs: Any,
         ) -> None:
             self.on_llm_error(error, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
 
@@ -820,7 +852,9 @@ if BaseCallbackHandler is not None:
         ) -> None:
             run_id_str = str(run_id)
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
-            owner = self._trace_mapping.get(parent_run_id_str or run_id_str, parent_run_id_str or run_id_str)
+            owner = self._trace_mapping.get(
+                parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
+            )
             self._start_span(
                 lc_run_id=run_id_str,
                 owner_run_id=owner,
@@ -838,16 +872,22 @@ if BaseCallbackHandler is not None:
             parent_run_id: UUID | None = None,
             **kwargs: Any,
         ) -> None:
-            self.on_tool_start(serialized, input_str, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
+            self.on_tool_start(
+                serialized, input_str, run_id=run_id, parent_run_id=parent_run_id, **kwargs
+            )
 
         def on_tool_end(
             self, output: Any, *, run_id: UUID, parent_run_id: UUID | None = None, **kwargs: Any
         ) -> None:
             run_id_str = str(run_id)
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
-            owner = self._trace_mapping.get(parent_run_id_str or run_id_str, parent_run_id_str or run_id_str)
+            owner = self._trace_mapping.get(
+                parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
+            )
             self._finish_span(
-                lc_run_id=run_id_str, owner_run_id=owner, output_payload=self._serialize_input(output)
+                lc_run_id=run_id_str,
+                owner_run_id=owner,
+                output_payload=self._serialize_input(output),
             )
             with self._lock:
                 self._trace_mapping.pop(run_id_str, None)
@@ -858,17 +898,29 @@ if BaseCallbackHandler is not None:
             self.on_tool_end(output, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
 
         def on_tool_error(
-            self, error: BaseException, *, run_id: UUID, parent_run_id: UUID | None = None, **kwargs: Any
+            self,
+            error: BaseException,
+            *,
+            run_id: UUID,
+            parent_run_id: UUID | None = None,
+            **kwargs: Any,
         ) -> None:
             run_id_str = str(run_id)
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
-            owner = self._trace_mapping.get(parent_run_id_str or run_id_str, parent_run_id_str or run_id_str)
+            owner = self._trace_mapping.get(
+                parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
+            )
             self._finish_span(lc_run_id=run_id_str, owner_run_id=owner, error=error)
             with self._lock:
                 self._trace_mapping.pop(run_id_str, None)
 
         async def on_tool_error_async(
-            self, error: BaseException, *, run_id: UUID, parent_run_id: UUID | None = None, **kwargs: Any
+            self,
+            error: BaseException,
+            *,
+            run_id: UUID,
+            parent_run_id: UUID | None = None,
+            **kwargs: Any,
         ) -> None:
             self.on_tool_error(error, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
 
@@ -878,7 +930,9 @@ if BaseCallbackHandler is not None:
             """Handle agent action decisions."""
             run_id_str = str(run_id)
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
-            owner = self._trace_mapping.get(parent_run_id_str or run_id_str, parent_run_id_str or run_id_str)
+            owner = self._trace_mapping.get(
+                parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
+            )
 
             tool_name = getattr(action, "tool", "unknown_tool")
 
@@ -930,7 +984,9 @@ if BaseCallbackHandler is not None:
             """Handle retriever start for RAG workflows."""
             run_id_str = str(run_id)
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
-            owner = self._trace_mapping.get(parent_run_id_str or run_id_str, parent_run_id_str or run_id_str)
+            owner = self._trace_mapping.get(
+                parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
+            )
             self._start_span(
                 lc_run_id=run_id_str,
                 owner_run_id=owner,
@@ -949,7 +1005,9 @@ if BaseCallbackHandler is not None:
             parent_run_id: UUID | None = None,
             **kwargs: Any,
         ) -> None:
-            self.on_retriever_start(serialized, query, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
+            self.on_retriever_start(
+                serialized, query, run_id=run_id, parent_run_id=parent_run_id, **kwargs
+            )
 
         def on_retriever_end(
             self,
@@ -962,14 +1020,18 @@ if BaseCallbackHandler is not None:
             """Handle retriever end."""
             run_id_str = str(run_id)
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
-            owner = self._trace_mapping.get(parent_run_id_str or run_id_str, parent_run_id_str or run_id_str)
+            owner = self._trace_mapping.get(
+                parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
+            )
 
             output_payload = {
                 "documents": self._serialize_input(documents),
                 "num_documents": len(documents),
             }
 
-            self._finish_span(lc_run_id=run_id_str, owner_run_id=owner, output_payload=output_payload)
+            self._finish_span(
+                lc_run_id=run_id_str, owner_run_id=owner, output_payload=output_payload
+            )
             with self._lock:
                 self._trace_mapping.pop(run_id_str, None)
 
@@ -994,7 +1056,9 @@ if BaseCallbackHandler is not None:
             """Handle retriever error."""
             run_id_str = str(run_id)
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
-            owner = self._trace_mapping.get(parent_run_id_str or run_id_str, parent_run_id_str or run_id_str)
+            owner = self._trace_mapping.get(
+                parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
+            )
             self._finish_span(lc_run_id=run_id_str, owner_run_id=owner, error=error)
             with self._lock:
                 self._trace_mapping.pop(run_id_str, None)
