@@ -106,6 +106,7 @@ class SecurityConfig:
     rate_limit_max_requests: int = 5000
     rate_limit_time_window: float = 60.0
     allow_telemetry_redaction: bool = False
+    _rate_limiter: RateLimiter | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         """Create rate limiter if enabled."""

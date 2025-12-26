@@ -6,11 +6,11 @@
 
 This is the development guide for the Tracium Python SDK. For user documentation, see [https://docs.tracium.ai](https://docs.tracium.ai).
 
-**Version:** 0.1.2
+**Version:** 0.2.0
 
 ## Project Overview
 
-The Tracium Python SDK provides automatic instrumentation and tracing for LLM applications. It supports OpenAI, Anthropic, Google Gemini, LangChain, and LangGraph with minimal configuration.
+The Tracium Python SDK provides automatic instrumentation and tracing for LLM applications. It supports OpenAI, Anthropic, Google Gemini, LangChain, and LangGraph with minimal configuration. The SDK also includes web framework support for Flask, Django, FastAPI (with uvicorn), and Celery, with WSGI compatibility.
 
 ## Development Setup
 
@@ -78,7 +78,13 @@ tracium/
 │       │   ├── auto_detection.py    # Library detection
 │       │   ├── auto_instrumentation.py  # Main instrumentation logic
 │       │   ├── auto_trace_tracker.py    # Automatic trace tracking
-│       │   └── decorators.py        # Decorator-based instrumentation
+│       │   ├── decorators.py        # Decorator-based instrumentation
+│       │   └── web_frameworks/      # Web framework integrations
+│       │       ├── flask.py         # Flask integration
+│       │       ├── django.py        # Django integration
+│       │       ├── fastapi.py       # FastAPI/Starlette integration
+│       │       ├── celery.py        # Celery integration
+│       │       └── generic.py       # Generic WSGI middleware
 │       ├── integrations/            # Library-specific integrations
 │       │   ├── anthropic.py         # Anthropic/Claude integration
 │       │   ├── google.py            # Google Gemini integration
@@ -113,6 +119,7 @@ tracium/
 - **`instrumentation/auto_instrumentation.py`**: Main orchestration for auto-instrumentation
 - **`instrumentation/auto_detection.py`**: Detects which libraries are installed
 - **`integrations/*.py`**: Library-specific instrumentation hooks
+- **`instrumentation/web_frameworks/*.py`**: Web framework integrations (Flask, Django, FastAPI, Celery)
 
 ### Context Management
 
@@ -148,6 +155,7 @@ pytest -v
 ```
 
 If you encounter `ModuleNotFoundError: No module named 'tracium'`, ensure you are in the virtual environment and have installed the package in editable mode, or run:
+
 ```bash
 PYTHONPATH=src pytest
 ```
@@ -234,7 +242,7 @@ Version is defined in `src/tracium/core/version.py`. Update this file when relea
 6. Run type checking: `mypy tracium/`
 7. Build package: `python -m build`
 8. Test installation: `pip install dist/tracium_sdk-*.whl`
-9. Tag release: `git tag v0.1.2`
+9. Tag release: `git tag v0.2.0`
 10. Push tags: `git push --tags`
 11. Publish to TestPyPI: The GitHub Actions workflow will automatically publish to TestPyPI when a version tag is pushed
 
@@ -297,7 +305,7 @@ def my_function(param1: str, param2: int) -> bool:
 
 ### Adding a New Integration
 
-1. Create a new file in `integrations/` (e.g., `integrations/new_library.py`)
+1. Create a new file in `integrations/` (e.g., `integrations/new_library.py`) or `instrumentation/web_frameworks/` for web frameworks
 2. Implement instrumentation hooks
 3. Register in `instrumentation/auto_instrumentation.py`
 4. Add detection logic in `instrumentation/auto_detection.py`
@@ -346,6 +354,16 @@ These are optional and only needed if you want to test specific integrations:
 - `google-generativeai>=0.3.0`: Google Gemini integration
 - `langchain>=0.1.0`: LangChain integration
 - `langgraph>=0.0.1`: LangGraph integration
+
+### Web Framework Support
+
+The SDK includes automatic instrumentation for popular web frameworks:
+
+- **Flask**: Automatic route detection and response tracking
+- **Django**: Request/response lifecycle tracking
+- **FastAPI/Starlette**: ASGI support (works with uvicorn)
+- **Celery**: Background task tracking
+- **WSGI**: Generic middleware support for WSGI-compatible servers
 
 ### Dev Dependencies
 

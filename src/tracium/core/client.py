@@ -166,8 +166,12 @@ class TraciumClient:
                 "base_url": self._config.base_url,
                 "timeout": self._config.timeout,
                 "retry_config": {
-                    "max_retries": self._config.retry_config.max_retries,
-                    "backoff_factor": self._config.retry_config.backoff_factor,
+                    "max_retries": self._config.retry_config.max_retries
+                    if self._config.retry_config
+                    else 3,
+                    "backoff_factor": self._config.retry_config.backoff_factor
+                    if self._config.retry_config
+                    else 1.0,
                 },
             },
         )
@@ -240,12 +244,6 @@ class TraciumClient:
 
     def trigger_prompt_embeddings_drift_check(self, *args, **kwargs):
         return self._api.trigger_prompt_embeddings_drift_check(*args, **kwargs)
-
-    def create_prompt_embeddings_baseline(self, *args, **kwargs):
-        return self._api.create_prompt_embeddings_baseline(*args, **kwargs)
-
-    def create_evaluation(self, *args, **kwargs):
-        return self._api.create_evaluation(*args, **kwargs)
 
     def get_gantt_data(self, *args, **kwargs):
         return self._api.get_gantt_data(*args, **kwargs)

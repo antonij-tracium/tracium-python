@@ -109,7 +109,12 @@ class TraciumAPIEndpoints:
             "Recording agent spans",
             extra={"trace_id": validated_trace_id, "span_count": len(validated_spans)},
         )
-        return self._http.post(f"/agents/traces/{validated_trace_id}/spans", json=payload)
+        result = self._http.post(f"/agents/traces/{validated_trace_id}/spans", json=payload)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "spans" in result and isinstance(result["spans"], list):
+            return result["spans"]
+        return [result]  # Fallback: wrap single dict in list
 
     def update_agent_span(
         self,
@@ -127,10 +132,6 @@ class TraciumAPIEndpoints:
             validated_span["span_type"] = validate_span_type(str(validated_span["span_type"]))
 
         payload = {"spans": [validated_span]}
-        logger.debug(
-            "Updating agent span",
-            extra={"trace_id": validated_trace_id, "span_id": validated_span_id},
-        )
         result = self._http.post(f"/agents/traces/{validated_trace_id}/spans", json=payload)
         if isinstance(result, list) and len(result) > 0:
             return result[0]
@@ -197,7 +198,12 @@ class TraciumAPIEndpoints:
             params["alert_channels"] = list(alert_channels)
         if workspace_id is not None:
             params["workspace_id"] = workspace_id
-        return self._http.post("/drift/check", params=params)
+        result = self._http.post("/drift/check", params=params)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
+            return result["results"]
+        return [result]  # Fallback: wrap single dict in list
 
     def trigger_prompt_embeddings_drift_check(
         self,
@@ -227,76 +233,17 @@ class TraciumAPIEndpoints:
             params["workspace_ids"] = list(workspace_ids)
         if alert_channels is not None:
             params["alert_channels"] = list(alert_channels)
-        return self._http.post("/drift/prompt-embeddings/check", params=params)
-
-    def create_prompt_embeddings_baseline(
-        self,
-        workspace_id: str,
-        *,
-        baseline_days: int = 60,
-    ) -> dict[str, Any]:
-        """
-        Create or update baseline embedding centroid for a workspace.
-
-        Args:
-            workspace_id: Workspace ID
-            baseline_days: Number of days to use for baseline (default: 60)
-        """
-        params: dict[str, Any] = {
-            "workspace_id": workspace_id,
-            "baseline_days": baseline_days,
-        }
-        return self._http.post("/drift/prompt-embeddings/baseline", params=params)
-
-    def create_evaluation(
-        self,
-        input_text: str,
-        output_text: str,
-        *,
-        context: str | None = None,
-        workspace_id: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Submit an evaluation for processing.
-
-        Embeddings are computed automatically on the backend.
-
-        Args:
-            input_text: The input/query text for evaluation
-            output_text: The generated output text for evaluation
-            context: Optional context for evaluation
-            workspace_id: Optional workspace ID (defaults to user's default workspace)
-
-        Returns:
-            Dict containing the created evaluation with id, status, etc.
-
-        Raises:
-            ValueError: If input_text or output_text is empty
-        """
-        if not input_text or not input_text.strip():
-            raise ValueError("input_text cannot be empty")
-        if not output_text or not output_text.strip():
-            raise ValueError("output_text cannot be empty")
-
-        payload: dict[str, Any] = {
-            "input_text": input_text.strip(),
-            "output_text": output_text.strip(),
-        }
-
-        if context:
-            payload["context"] = context.strip()
-        if workspace_id:
-            payload["workspace_id"] = workspace_id
-
-        logger.debug("Creating evaluation")
-        return self._http.post("/evaluations/", json=payload)
+        result = self._http.post("/drift/prompt-embeddings/check", params=params)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
+            return result["results"]
+        return [result]  # Fallback: wrap single dict in list
 
     def get_current_user(self) -> dict[str, Any]:
         """
         Get current user information including plan.
-
         The result is cached to avoid repeated API calls.
-
         Returns:
             Dict containing user info with 'plan' field (e.g., 'free', 'developer', 'startup', 'scale')
         """

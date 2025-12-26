@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tracium"
-version = "0.1.2"
+version = "0.2.0"
 description = "Official Python SDK for the Tracium telemetry and evaluation API. Automatic tracing for OpenAI, Anthropic, Google Gemini, LangChain, and LangGraph."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -55,27 +55,31 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-asyncio>=0.21.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0",
+    "ruff>=0.9.9",
+    "mypy>=1.13.0",
     "python-dotenv>=1.0.0",
 ]
-openai = [
-    "openai>=1.0.0",
-]
-anthropic = [
-    "anthropic>=0.18.0",
-]
+openai = ["openai>=1.0.0"]
+anthropic = ["anthropic>=0.18.0"]
 google = [
     "google-generativeai>=0.3.0",
-    "google-genai>=0.1.0",
+    "google-genai>=0.1.0"
 ]
 langchain = [
     "langchain>=0.1.0",
-    "langchain-core>=0.1.0",
+    "langchain-core>=0.1.0"
 ]
-langgraph = [
-    "langgraph>=0.0.1",
+langgraph = ["langgraph>=0.0.1"]
+
+flask = ["flask>=2.0"]
+django = ["django>=4.0"]
+fastapi = [
+    "fastapi>=0.100",
+    "starlette>=0.30",
+    "starlette-context>=0.3"
 ]
+celery = ["celery>=5.3"]
+
 all = [
     "openai>=1.0.0",
     "anthropic>=0.18.0",
@@ -84,6 +88,12 @@ all = [
     "langchain>=0.1.0",
     "langchain-core>=0.1.0",
     "langgraph>=0.0.1",
+    "flask>=2.0",
+    "django>=4.0",
+    "fastapi>=0.100",
+    "starlette>=0.30",
+    "starlette-context>=0.3",
+    "celery>=5.3"
 ]
 
 [project.urls]
@@ -109,6 +119,7 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]
+extend-ignore = ["PGH003"]  # Prevent ruff from adding blanket type ignores
 
 [tool.mypy]
 python_version = "3.10"
@@ -121,31 +132,9 @@ no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
-
-[[tool.mypy.overrides]]
-module = [
-    "tracium.integrations.langchain",
-    "tracium.integrations.openai",
-    "tracium.integrations.google",
-    "tracium.integrations.langgraph",
-    "tracium.instrumentation.decorators",
-    "tracium.instrumentation.auto_trace_tracker",
-    "tracium.helpers.thread_helpers",
-    "tracium.context.context_propagation",
-    "tracium.api.http_client",
-    "tracium.api.endpoints",
-    "tracium.helpers.retry",
-    "tracium.helpers.retry_async",
-    "tracium.helpers.logging_config",
-    "tracium.helpers.security",
-    "tracium.models.span_handle",
-    "tracium.models.trace_handle",
-    "tracium.core.config",
-    "tracium.core.client",
-    "tracium.helpers.parallel_tracker",
-    "tracium.helpers.call_hierarchy",
-]
-ignore_errors = true
+ignore_missing_imports = true
+explicit_package_bases = true
+mypy_path = "src"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

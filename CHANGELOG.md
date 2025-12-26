@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2025-12-25
+
+### Added
+
+- **Web Framework Support**: Added comprehensive web framework instrumentation for automatic tracing
+  - Flask integration with automatic route detection and response tracking
+  - Django integration with request/response lifecycle tracking
+  - FastAPI/Starlette integration with ASGI support (works with uvicorn)
+  - Celery integration for background task tracking
+  - Generic WSGI middleware support for compatibility with various WSGI servers
+  - Automatic trace closure on request completion for all supported frameworks
+
+### Fixed
+
+- Fixed various existing bugs to improve stability and reliability
+
 ## [0.1.2] - 2025-12-22
 
 ### Fixed
@@ -16,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CI/CD**: Updated GitHub Actions workflow to deploy to TestPyPI instead of production PyPI for safer release testing
 - Updated release workflow to use TestPyPI repository URL and environment
+
 ## [0.1.1] - 2025-12-22
 
 ### Added
@@ -114,6 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **0.2.0**: Added web framework support (Flask, Django, FastAPI, Celery) with uvicorn and WSGI compatibility, fixed existing bugs
 - **0.1.2**: Fixed LangChain optional dependency handling, updated CI/CD to use TestPyPI
 - **0.1.0**: Initial public release with full feature set including automatic instrumentation, context propagation, and comprehensive tooling
 

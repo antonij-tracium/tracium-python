@@ -83,7 +83,7 @@ class HTTPClient:
                 kwargs["timeout"] = self._config.timeout
 
             method_func = getattr(self._client, method.lower())
-            response = method_func(path, **kwargs)
+            response: httpx.Response = method_func(path, **kwargs)
             response.raise_for_status()
             return response
 
@@ -116,7 +116,10 @@ class HTTPClient:
                 },
             )
 
-            return response.json()
+            json_data = response.json()
+            if not isinstance(json_data, dict):
+                raise TypeError(f"Expected dict from API response, got {type(json_data).__name__}")
+            return json_data
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code if e.response else None
             error_msg = f"API request failed with HTTP {status_code} at {path}"
@@ -158,7 +161,7 @@ class HTTPClient:
                 error_msg += "\n  1. Your API key is set correctly (via api_key parameter or TRACIUM_API_KEY env var)"
                 error_msg += "\n  2. Your API key is valid and not expired"
                 error_msg += "\n  3. The API key has the necessary permissions for this endpoint"
-            elif status_code >= 500:
+            elif status_code is not None and status_code >= 500:
                 error_msg += f". Backend server error. The backend at {self._config.base_url} may be experiencing issues."
 
             log_extra = {

@@ -24,7 +24,6 @@ def detect_agent_name(default: str = "app") -> str:
     try:
         entry_function = None
         entry_file = None
-        entry_patterns = ["main", "run_", "pipeline", "workflow", "process", "execute", "__main__"]
 
         while frame is not None:
             filename = frame.f_code.co_filename
@@ -44,10 +43,12 @@ def detect_agent_name(default: str = "app") -> str:
                 frame = frame.f_back
                 continue
 
-            if any(pattern in function_name.lower() for pattern in entry_patterns):
-                entry_function = function_name
+            # Track the outermost user function as the entry point
+            if entry_file is None:
                 entry_file = filename
-                break
+                entry_function = (
+                    function_name if function_name != "<module>" else Path(filename).stem
+                )
 
             if function_name == "<module>":
                 entry_file = filename
@@ -57,12 +58,6 @@ def detect_agent_name(default: str = "app") -> str:
                     if entry_function.endswith(".py"):
                         entry_function = entry_function[:-3]
                 break
-
-            if entry_file is None:
-                entry_file = filename
-                entry_function = (
-                    function_name if function_name != "<module>" else Path(filename).stem
-                )
 
             frame = frame.f_back
 

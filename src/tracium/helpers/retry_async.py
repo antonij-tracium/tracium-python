@@ -41,7 +41,8 @@ async def retry_with_backoff_async(
         try:
             result = await func()
             if hasattr(result, "status_code") and should_retry(None, result.status_code, config):
-                result.raise_for_status()
+                if hasattr(result, "raise_for_status"):
+                    result.raise_for_status()
             return result
         except httpx.HTTPStatusError as e:
             last_exception = e

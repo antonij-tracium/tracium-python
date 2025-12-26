@@ -15,7 +15,10 @@ def _normalize_prompt(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | di
     if "contents" in kwargs:
         return {"contents": kwargs["contents"]}
     if "prompt" in kwargs:
-        return kwargs["prompt"]
+        prompt = kwargs["prompt"]
+        if isinstance(prompt, (str | dict)):
+            return prompt
+        return None
     if args:
         first = args[0]
         if isinstance(first, str):
@@ -41,10 +44,7 @@ def patch_google_genai(client: TraciumClient) -> None:
     if STATE.google_patched:
         return
 
-    # 1. Patch Legacy SDK (google.generativeai)
     _patch_legacy_sdk(client)
-
-    # 2. Patch New SDK (google.genai)
     _patch_new_sdk(client)
 
     STATE.google_patched = True
@@ -63,7 +63,6 @@ def _patch_legacy_sdk(client: TraciumClient) -> None:
 
     options = get_options()
 
-    # Patch generate_content
     if hasattr(GenerativeModel, "generate_content"):
         try:
             original_generate_content = GenerativeModel.generate_content
@@ -79,11 +78,10 @@ def _patch_legacy_sdk(client: TraciumClient) -> None:
                     model_name=model_name,
                 )
 
-            GenerativeModel.generate_content = traced_generate_content
+            GenerativeModel.generate_content = traced_generate_content  # type: ignore[method-assign]
         except Exception:
             pass
 
-    # Patch generate_content_async
     if hasattr(GenerativeModel, "generate_content_async"):
         try:
             original_generate_content_async = GenerativeModel.generate_content_async
@@ -99,7 +97,7 @@ def _patch_legacy_sdk(client: TraciumClient) -> None:
                     model_name=model_name,
                 )
 
-            GenerativeModel.generate_content_async = traced_generate_content_async
+            GenerativeModel.generate_content_async = traced_generate_content_async  # type: ignore[method-assign]
         except Exception:
             pass
 
@@ -113,7 +111,6 @@ def _patch_new_sdk(client: TraciumClient) -> None:
 
     options = get_options()
 
-    # Patch Models.generate_content (Sync)
     if hasattr(Models, "generate_content"):
         try:
             original_generate_content_new = Models.generate_content
@@ -135,11 +132,10 @@ def _patch_new_sdk(client: TraciumClient) -> None:
                     model_name=str(model_name),
                 )
 
-            Models.generate_content = traced_generate_content_new
+            Models.generate_content = traced_generate_content_new  # type: ignore[method-assign]
         except Exception:
             pass
 
-    # Patch AsyncModels.generate_content (Async)
     if hasattr(AsyncModels, "generate_content"):
         try:
             original_generate_content_async_new = AsyncModels.generate_content
@@ -158,7 +154,7 @@ def _patch_new_sdk(client: TraciumClient) -> None:
                     model_name=str(model_name),
                 )
 
-            AsyncModels.generate_content = traced_generate_content_async_new
+            AsyncModels.generate_content = traced_generate_content_async_new  # type: ignore[method-assign]
         except Exception:
             pass
 
@@ -195,13 +191,30 @@ def _trace_google_call(
     ) as span_handle:
         if prompt_payload is not None:
             span_handle.record_input(prompt_payload)
+        error_occurred = None
         try:
             response = original_fn()
         except Exception as e:
             import traceback
 
+            error_occurred = e
             span_handle.record_output({"error": str(e), "traceback": traceback.format_exc()})
             span_handle.mark_failed(str(e))
+
+            from ..instrumentation.auto_trace_tracker import get_current_auto_trace_context
+
+            auto_context = get_current_auto_trace_context()
+            if auto_context:
+                auto_context.mark_span_failed()
+
+            from ..instrumentation.auto_trace_tracker import (
+                _get_web_route_info,
+                close_auto_trace_if_needed,
+            )
+
+            is_web_context = _get_web_route_info() is not None
+            close_auto_trace_if_needed(force_close=is_web_context, error=error_occurred)
+
             raise
 
         usage = getattr(response, "usage_metadata", None)
@@ -220,6 +233,14 @@ def _trace_google_call(
                 output_data = str(response)
 
         span_handle.record_output(output_data)
+
+        from ..instrumentation.auto_trace_tracker import (
+            _get_web_route_info,
+            close_auto_trace_if_needed,
+        )
+
+        is_web_context = _get_web_route_info() is not None
+        close_auto_trace_if_needed(force_close=is_web_context)
 
         return response
 
@@ -258,10 +279,27 @@ async def _trace_google_call_async(
     if prompt_payload is not None:
         span_handle.record_input(prompt_payload)
 
+    error_occurred = None
     try:
         response = await original_fn()
     except Exception as exc:
+        error_occurred = exc
         span_context.__exit__(type(exc), exc, exc.__traceback__)
+
+        from ..instrumentation.auto_trace_tracker import get_current_auto_trace_context
+
+        auto_context = get_current_auto_trace_context()
+        if auto_context:
+            auto_context.mark_span_failed()
+
+        from ..instrumentation.auto_trace_tracker import (
+            _get_web_route_info,
+            close_auto_trace_if_needed,
+        )
+
+        is_web_context = _get_web_route_info() is not None
+        close_auto_trace_if_needed(force_close=is_web_context, error=error_occurred)
+
         raise
 
     usage = getattr(response, "usage_metadata", None)
@@ -281,5 +319,10 @@ async def _trace_google_call_async(
 
     span_handle.record_output(output_data)
     span_context.__exit__(None, None, None)
+
+    from ..instrumentation.auto_trace_tracker import _get_web_route_info, close_auto_trace_if_needed
+
+    is_web_context = _get_web_route_info() is not None
+    close_auto_trace_if_needed(force_close=is_web_context)
 
     return response

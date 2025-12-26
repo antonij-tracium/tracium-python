@@ -69,7 +69,7 @@ def register_langgraph_hooks(client: TraciumClient) -> None:
     if STATE.langgraph_registered:
         return
     try:
-        from langgraph.graph.executor import Executor  # type: ignore[import]
+        from langgraph.graph.executor import Executor
     except Exception:
         return
 
