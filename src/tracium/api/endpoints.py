@@ -73,7 +73,10 @@ class TraciumAPIEndpoints:
             "Starting agent trace",
             extra={"agent_name": validated_agent_name, "trace_id": validated_trace_id},
         )
-        return self._http.post("/agents/traces", json=payload)
+        result = self._http.post("/agents/traces", json=payload)
+        if isinstance(result, dict):
+            return result
+        raise TypeError(f"Expected dict from API response, got {type(result).__name__}")
 
     def record_agent_spans(
         self,
@@ -134,8 +137,13 @@ class TraciumAPIEndpoints:
         payload = {"spans": [validated_span]}
         result = self._http.post(f"/agents/traces/{validated_trace_id}/spans", json=payload)
         if isinstance(result, list) and len(result) > 0:
-            return result[0]
-        return result
+            first_item = result[0]
+            if isinstance(first_item, dict):
+                return first_item
+            raise TypeError(f"Expected dict in list response, got {type(first_item).__name__}")
+        if isinstance(result, dict):
+            return result
+        raise TypeError(f"Expected dict or list from API response, got {type(result).__name__}")
 
     def complete_agent_trace(
         self,
@@ -155,7 +163,10 @@ class TraciumAPIEndpoints:
             payload["tags"] = list(validated_tags)
 
         logger.debug("Completing agent trace", extra={"trace_id": validated_trace_id})
-        return self._http.post(f"/agents/traces/{validated_trace_id}/complete", json=payload)
+        result = self._http.post(f"/agents/traces/{validated_trace_id}/complete", json=payload)
+        if isinstance(result, dict):
+            return result
+        raise TypeError(f"Expected dict from API response, got {type(result).__name__}")
 
     def fail_agent_trace(
         self,
@@ -174,7 +185,10 @@ class TraciumAPIEndpoints:
             payload["error"] = validated_error
 
         logger.debug("Failing agent trace", extra={"trace_id": validated_trace_id})
-        return self._http.post(f"/agents/traces/{validated_trace_id}/fail", json=payload)
+        result = self._http.post(f"/agents/traces/{validated_trace_id}/fail", json=payload)
+        if isinstance(result, dict):
+            return result
+        raise TypeError(f"Expected dict from API response, got {type(result).__name__}")
 
     def trigger_drift_check(
         self,
@@ -248,7 +262,9 @@ class TraciumAPIEndpoints:
             Dict containing user info with 'plan' field (e.g., 'free', 'developer', 'startup', 'scale')
         """
         user_info = self._http.get("/auth/me")
-        return {"plan": user_info.get("plan", "free")}
+        if isinstance(user_info, dict):
+            return {"plan": user_info.get("plan", "free")}
+        raise TypeError(f"Expected dict from API response, got {type(user_info).__name__}")
 
     def get_gantt_data(self, trace_id: str) -> dict[str, Any]:
         """
@@ -269,4 +285,7 @@ class TraciumAPIEndpoints:
         """
         validated_trace_id = _validate_and_log("get_gantt_data", validate_trace_id, trace_id)
         logger.debug("Fetching Gantt chart data", extra={"trace_id": validated_trace_id})
-        return self._http.get(f"/agents/traces/{validated_trace_id}/gantt")
+        result = self._http.get(f"/agents/traces/{validated_trace_id}/gantt")
+        if isinstance(result, dict):
+            return result
+        raise TypeError(f"Expected dict from API response, got {type(result).__name__}")

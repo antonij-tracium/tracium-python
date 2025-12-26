@@ -36,7 +36,7 @@ class HTTPClient:
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         extract_error_detail: bool = False,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | list[Any]:
         """
         Internal method to make HTTP requests with retry logic and error handling.
 
@@ -117,8 +117,11 @@ class HTTPClient:
             )
 
             json_data = response.json()
-            if not isinstance(json_data, dict):
-                raise TypeError(f"Expected dict from API response, got {type(json_data).__name__}")
+            # Allow both dict and list responses - some endpoints return lists
+            if not isinstance(json_data, (dict | list)):
+                raise TypeError(
+                    f"Expected dict or list from API response, got {type(json_data).__name__}"
+                )
             return json_data
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code if e.response else None
@@ -232,16 +235,16 @@ class HTTPClient:
             logger.warning("SDK configured to fail-open, returning empty response")
             return {}
 
-    def get(self, path: str) -> dict[str, Any]:
+    def get(self, path: str) -> dict[str, Any] | list[Any]:
         """Internal method to make GET requests with retry logic and error handling."""
         return self.request("GET", path)
 
-    def patch(self, path: str, *, json: dict[str, Any]) -> dict[str, Any]:
+    def patch(self, path: str, *, json: dict[str, Any]) -> dict[str, Any] | list[Any]:
         """Internal method to make PATCH requests with retry logic and error handling."""
         return self.request("PATCH", path, json=json)
 
     def post(
         self, path: str, *, json: dict[str, Any] | None = None, params: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | list[Any]:
         """Internal method to make POST requests with retry logic and error handling."""
         return self.request("POST", path, json=json, params=params, extract_error_detail=True)
