@@ -11,7 +11,7 @@ All integrations are tried in order until one succeeds.
 
 from __future__ import annotations
 
-from .celery import get_celery_task_info
+from .celery import get_celery_task_info, register_celery_response_hook
 from .django import get_django_route_info, register_django_response_hook
 from .fastapi import get_fastapi_route_info, register_fastapi_response_hook
 from .flask import get_flask_route_info, register_flask_response_hook
@@ -57,5 +57,10 @@ def register_response_hooks() -> None:
 
     try:
         register_django_response_hook()
+    except Exception:
+        pass
+
+    try:
+        register_celery_response_hook()
     except Exception:
         pass
