@@ -89,7 +89,7 @@ def register_fastapi_response_hook() -> None:
                 self._tracium_trace_closed = True
                 close_web_trace_on_request_completion()
 
-        Response.__init__ = patched_init
+        setattr(Response, "__init__", patched_init)
 
         try:
             from starlette.applications import Starlette
@@ -105,11 +105,11 @@ def register_fastapi_response_hook() -> None:
                         close_web_trace_on_request_completion(error=exc)
                         return await handler(request, exc)
 
-                    return original_exception_handler(
+                    return original_exception_handler(  # type: ignore[call-arg]
                         self, exc_class_or_status_code, wrapped_handler
                     )
 
-                Starlette.exception_handler = patched_exception_handler
+                setattr(Starlette, "exception_handler", patched_exception_handler)
                 setattr(Starlette, "_tracium_exception_patched", True)
         except Exception:
             pass

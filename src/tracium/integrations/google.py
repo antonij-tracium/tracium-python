@@ -78,7 +78,7 @@ def _patch_legacy_sdk(client: TraciumClient) -> None:
                     model_name=model_name,
                 )
 
-            GenerativeModel.generate_content = traced_generate_content
+            GenerativeModel.generate_content = traced_generate_content  # type: ignore[method-assign]
         except Exception:
             pass
 
@@ -97,7 +97,7 @@ def _patch_legacy_sdk(client: TraciumClient) -> None:
                     model_name=model_name,
                 )
 
-            GenerativeModel.generate_content_async = traced_generate_content_async
+            GenerativeModel.generate_content_async = traced_generate_content_async  # type: ignore[method-assign]
         except Exception:
             pass
 
@@ -132,7 +132,7 @@ def _patch_new_sdk(client: TraciumClient) -> None:
                     model_name=str(model_name),
                 )
 
-            Models.generate_content = traced_generate_content_new
+            Models.generate_content = traced_generate_content_new  # type: ignore[method-assign]
         except Exception:
             pass
 
@@ -154,7 +154,7 @@ def _patch_new_sdk(client: TraciumClient) -> None:
                     model_name=str(model_name),
                 )
 
-            AsyncModels.generate_content = traced_generate_content_async_new
+            AsyncModels.generate_content = traced_generate_content_async_new  # type: ignore[method-assign]
         except Exception:
             pass
 

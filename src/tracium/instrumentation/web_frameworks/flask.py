@@ -79,8 +79,8 @@ def register_flask_response_hook() -> None:
                         close_web_trace_on_request_completion(error=e)
                         raise
 
-                flask.Flask.make_response = patched_make_response
-                flask.Flask._tracium_response_patched = True
+                setattr(flask.Flask, "make_response", patched_make_response)
+                setattr(flask.Flask, "_tracium_response_patched", True)
 
             if not hasattr(flask, "_tracium_jsonify_patched"):
                 original_jsonify = flask.jsonify
@@ -100,8 +100,8 @@ def register_flask_response_hook() -> None:
                     close_web_trace_on_request_completion(error=e)
                     return original_handle_exception(self, e)
 
-                flask.Flask.handle_exception = patched_handle_exception
-                flask.Flask._tracium_exception_patched = True
+                setattr(flask.Flask, "handle_exception", patched_handle_exception)
+                setattr(flask.Flask, "_tracium_exception_patched", True)
 
             _FLASK_RESPONSE_PATCHED = True
         except ImportError:

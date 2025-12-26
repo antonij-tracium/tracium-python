@@ -6,12 +6,17 @@ repos:
         args: ["--fix"]
         files: ^src/.*\.py$
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.4.1
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies: [".[all,dev]"]
-        args: ["--install-types", "--non-interactive"]
+        name: mypy
+        entry: mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+        args:
+          - "src/"
+
 
 
   - repo: local
