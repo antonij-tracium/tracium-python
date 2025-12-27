@@ -1,11 +1,14 @@
 """
 API endpoint methods for Tracium SDK.
+
+All methods are designed to be non-blocking and fail-safe.
+Telemetry data is sent asynchronously in the background.
 """
 
-from collections.abc import Iterable, Sequence
-from typing import Any
+from __future__ import annotations
 
-from tracium.api.http_client import HTTPClient
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from ..context.tenant_context import get_current_tenant
 from ..helpers.logging_config import get_logger
@@ -18,13 +21,39 @@ from ..helpers.validation import (
 )
 from ..utils.validation import _validate_and_log
 
+if TYPE_CHECKING:
+    from .http_client import HTTPClient
+
 logger = get_logger()
+
+
+def _safe_execute(operation_name: str, func: Any, default: Any = None) -> Any:
+    """
+    Safely execute a function, catching all exceptions.
+
+    Args:
+        operation_name: Name of the operation for logging
+        func: Function to execute
+        default: Default value to return on error
+
+    Returns:
+        Function result or default value on error
+    """
+    try:
+        return func()
+    except Exception as e:
+        logger.debug(f"SDK operation '{operation_name}' failed (ignored): {type(e).__name__}: {e}")
+        return default
 
 
 class TraciumAPIEndpoints:
     """
     API endpoint methods for Tracium.
-    This class contains all the API endpoint methods that were previously in TraciumClient.
+
+    All telemetry operations are designed to:
+    1. Never block user code for extended periods
+    2. Never raise exceptions that could break user applications
+    3. Send data asynchronously when possible
     """
 
     def __init__(self, http_client: HTTPClient) -> None:
@@ -41,83 +70,111 @@ class TraciumAPIEndpoints:
         workspace_id: str | None = None,
         version: str | None = None,
     ) -> dict[str, Any]:
-        from ..helpers.validation import validate_agent_name
+        """
+        Start a new agent trace.
 
-        validated_agent_name = _validate_and_log(
-            "start_agent_trace", validate_agent_name, agent_name
-        )
-        validated_trace_id = (
-            _validate_and_log("start_agent_trace", validate_trace_id, trace_id)
-            if trace_id
-            else None
-        )
-        validated_tags = _validate_and_log("start_agent_trace", validate_tags, tags)
+        This operation is synchronous as we need the trace ID from the response.
+        However, it is designed to fail gracefully and return a usable response
+        even on errors.
+        """
+        try:
+            from ..helpers.validation import validate_agent_name
 
-        payload: dict[str, Any] = {"agent_name": validated_agent_name}
-        if model_id:
-            payload["model_id"] = str(model_id)[:256]
-        if validated_tags:
-            payload["tags"] = list(validated_tags)
-        if validated_trace_id:
-            payload["trace_id"] = validated_trace_id
-        if workspace_id:
-            payload["workspace_id"] = str(workspace_id)[:256]
-        if version:
-            payload["version"] = str(version)[:128]
+            validated_agent_name = _validate_and_log(
+                "start_agent_trace", validate_agent_name, agent_name
+            )
+            validated_trace_id = (
+                _validate_and_log("start_agent_trace", validate_trace_id, trace_id)
+                if trace_id
+                else None
+            )
+            validated_tags = _validate_and_log("start_agent_trace", validate_tags, tags)
 
-        tenant_id = get_current_tenant()
-        if tenant_id:
-            payload["tenant_id"] = str(tenant_id)[:255]
+            payload: dict[str, Any] = {"agent_name": validated_agent_name}
+            if model_id:
+                payload["model_id"] = str(model_id)[:256]
+            if validated_tags:
+                payload["tags"] = list(validated_tags)
+            if validated_trace_id:
+                payload["trace_id"] = validated_trace_id
+            if workspace_id:
+                payload["workspace_id"] = str(workspace_id)[:256]
+            if version:
+                payload["version"] = str(version)[:128]
 
-        logger.debug(
-            "Starting agent trace",
-            extra={"agent_name": validated_agent_name, "trace_id": validated_trace_id},
-        )
-        result = self._http.post("/agents/traces", json=payload)
-        if isinstance(result, dict):
-            return result
-        raise TypeError(f"Expected dict from API response, got {type(result).__name__}")
+            tenant_id = get_current_tenant()
+            if tenant_id:
+                payload["tenant_id"] = str(tenant_id)[:255]
+
+            logger.debug(
+                "Starting agent trace",
+                extra={"agent_name": validated_agent_name, "trace_id": validated_trace_id},
+            )
+            result = self._http.post("/agents/traces", json=payload)
+            if isinstance(result, dict):
+                return result
+            # Return a minimal valid response
+            return {"id": validated_trace_id}
+        except Exception as e:
+            logger.debug(f"start_agent_trace failed (returning fallback): {type(e).__name__}: {e}")
+            # Return fallback response with provided trace_id if available
+            return {"id": trace_id} if trace_id else {}
 
     def record_agent_spans(
         self,
         trace_id: str,
         spans: Iterable[dict[str, Any]],
     ) -> Sequence[dict[str, Any]]:
-        validated_trace_id = _validate_and_log("record_agent_spans", validate_trace_id, trace_id)
-        spans_list = list(spans)
-        if not spans_list:
-            raise ValueError("spans cannot be empty")
-        if len(spans_list) > 1000:
-            raise ValueError("spans cannot exceed 1000 items per request")
+        """
+        Record agent spans asynchronously.
 
-        validated_spans: list[dict[str, Any]] = []
-        for span in spans_list:
-            if not isinstance(span, dict):
-                raise TypeError("Each span must be a dictionary")
-            validated_span = dict(span)
-            if "span_type" in validated_span:
-                validated_span["span_type"] = validate_span_type(str(validated_span["span_type"]))
-            if "span_id" in validated_span:
-                validated_span["span_id"] = validate_span_id(str(validated_span["span_id"]))
-                del validated_span["span_id"]
-            if "parent_span_id" in validated_span:
-                validated_span["parent_span_id"] = validate_span_id(
-                    str(validated_span["parent_span_id"])
-                )
-                del validated_span["parent_span_id"]
-            validated_spans.append(validated_span)
+        This operation is non-blocking - spans are queued for background processing.
+        """
+        try:
+            validated_trace_id = _validate_and_log("record_agent_spans", validate_trace_id, trace_id)
+            spans_list = list(spans)
+            if not spans_list:
+                return []
+            if len(spans_list) > 1000:
+                spans_list = spans_list[:1000]  # Truncate instead of raising
 
-        payload = {"spans": validated_spans}
-        logger.debug(
-            "Recording agent spans",
-            extra={"trace_id": validated_trace_id, "span_count": len(validated_spans)},
-        )
-        result = self._http.post(f"/agents/traces/{validated_trace_id}/spans", json=payload)
-        if isinstance(result, list):
-            return result
-        if isinstance(result, dict) and "spans" in result and isinstance(result["spans"], list):
-            return result["spans"]
-        return [result]  # Fallback: wrap single dict in list
+            validated_spans: list[dict[str, Any]] = []
+            for span in spans_list:
+                if not isinstance(span, dict):
+                    continue
+                validated_span = dict(span)
+                try:
+                    if "span_type" in validated_span:
+                        validated_span["span_type"] = validate_span_type(str(validated_span["span_type"]))
+                    if "span_id" in validated_span:
+                        validated_span["span_id"] = validate_span_id(str(validated_span["span_id"]))
+                        del validated_span["span_id"]
+                    if "parent_span_id" in validated_span:
+                        validated_span["parent_span_id"] = validate_span_id(
+                            str(validated_span["parent_span_id"])
+                        )
+                        del validated_span["parent_span_id"]
+                except Exception:
+                    pass
+                validated_spans.append(validated_span)
+
+            if not validated_spans:
+                return []
+
+            payload = {"spans": validated_spans}
+            logger.debug(
+                "Recording agent spans",
+                extra={"trace_id": validated_trace_id, "span_count": len(validated_spans)},
+            )
+
+            # Use async posting for telemetry data - non-blocking
+            self._http.post_async(f"/agents/traces/{validated_trace_id}/spans", json=payload)
+
+            # Return the validated spans as acknowledgment
+            return validated_spans
+        except Exception as e:
+            logger.debug(f"record_agent_spans failed (ignored): {type(e).__name__}: {e}")
+            return []
 
     def update_agent_span(
         self,
@@ -125,25 +182,25 @@ class TraciumAPIEndpoints:
         span_id: str,
         span_data: dict[str, Any],
     ) -> dict[str, Any]:
-        """Update an existing agent span by POSTing with the existing span ID."""
-        validated_trace_id = _validate_and_log("update_agent_span", validate_trace_id, trace_id)
-        validated_span_id = _validate_and_log("update_agent_span", validate_span_id, span_id)
+        """Update an existing agent span asynchronously."""
+        try:
+            validated_trace_id = _validate_and_log("update_agent_span", validate_trace_id, trace_id)
+            validated_span_id = _validate_and_log("update_agent_span", validate_span_id, span_id)
 
-        validated_span = dict(span_data)
-        validated_span["id"] = validated_span_id
-        if "span_type" in validated_span:
-            validated_span["span_type"] = validate_span_type(str(validated_span["span_type"]))
+            validated_span = dict(span_data)
+            validated_span["id"] = validated_span_id
+            if "span_type" in validated_span:
+                validated_span["span_type"] = validate_span_type(str(validated_span["span_type"]))
 
-        payload = {"spans": [validated_span]}
-        result = self._http.post(f"/agents/traces/{validated_trace_id}/spans", json=payload)
-        if isinstance(result, list) and len(result) > 0:
-            first_item = result[0]
-            if isinstance(first_item, dict):
-                return first_item
-            raise TypeError(f"Expected dict in list response, got {type(first_item).__name__}")
-        if isinstance(result, dict):
-            return result
-        raise TypeError(f"Expected dict or list from API response, got {type(result).__name__}")
+            payload = {"spans": [validated_span]}
+
+            # Use async posting - non-blocking
+            self._http.post_async(f"/agents/traces/{validated_trace_id}/spans", json=payload)
+
+            return validated_span
+        except Exception as e:
+            logger.debug(f"update_agent_span failed (ignored): {type(e).__name__}: {e}")
+            return {}
 
     def complete_agent_trace(
         self,
@@ -153,20 +210,26 @@ class TraciumAPIEndpoints:
         metadata: dict[str, Any] | None = None,
         tags: Sequence[str] | None = None,
     ) -> dict[str, Any]:
-        validated_trace_id = _validate_and_log("complete_agent_trace", validate_trace_id, trace_id)
-        validated_tags = _validate_and_log("complete_agent_trace", validate_tags, tags)
+        """Complete an agent trace asynchronously."""
+        try:
+            validated_trace_id = _validate_and_log("complete_agent_trace", validate_trace_id, trace_id)
+            validated_tags = _validate_and_log("complete_agent_trace", validate_tags, tags)
 
-        payload: dict[str, Any] = {}
-        if summary:
-            payload["summary"] = summary
-        if validated_tags:
-            payload["tags"] = list(validated_tags)
+            payload: dict[str, Any] = {}
+            if summary:
+                payload["summary"] = summary
+            if validated_tags:
+                payload["tags"] = list(validated_tags)
 
-        logger.debug("Completing agent trace", extra={"trace_id": validated_trace_id})
-        result = self._http.post(f"/agents/traces/{validated_trace_id}/complete", json=payload)
-        if isinstance(result, dict):
-            return result
-        raise TypeError(f"Expected dict from API response, got {type(result).__name__}")
+            logger.debug("Completing agent trace", extra={"trace_id": validated_trace_id})
+
+            # Use async posting - non-blocking
+            self._http.post_async(f"/agents/traces/{validated_trace_id}/complete", json=payload)
+
+            return {"trace_id": validated_trace_id, "status": "completed"}
+        except Exception as e:
+            logger.debug(f"complete_agent_trace failed (ignored): {type(e).__name__}: {e}")
+            return {}
 
     def fail_agent_trace(
         self,
@@ -175,20 +238,26 @@ class TraciumAPIEndpoints:
         error: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        validated_trace_id = _validate_and_log("fail_agent_trace", validate_trace_id, trace_id)
-        validated_error = (
-            _validate_and_log("fail_agent_trace", validate_error_message, error) if error else None
-        )
+        """Mark an agent trace as failed asynchronously."""
+        try:
+            validated_trace_id = _validate_and_log("fail_agent_trace", validate_trace_id, trace_id)
+            validated_error = (
+                _validate_and_log("fail_agent_trace", validate_error_message, error) if error else None
+            )
 
-        payload: dict[str, Any] = {}
-        if validated_error:
-            payload["error"] = validated_error
+            payload: dict[str, Any] = {}
+            if validated_error:
+                payload["error"] = validated_error
 
-        logger.debug("Failing agent trace", extra={"trace_id": validated_trace_id})
-        result = self._http.post(f"/agents/traces/{validated_trace_id}/fail", json=payload)
-        if isinstance(result, dict):
-            return result
-        raise TypeError(f"Expected dict from API response, got {type(result).__name__}")
+            logger.debug("Failing agent trace", extra={"trace_id": validated_trace_id})
+
+            # Use async posting - non-blocking
+            self._http.post_async(f"/agents/traces/{validated_trace_id}/fail", json=payload)
+
+            return {"trace_id": validated_trace_id, "status": "failed"}
+        except Exception as e:
+            logger.debug(f"fail_agent_trace failed (ignored): {type(e).__name__}: {e}")
+            return {}
 
     def trigger_drift_check(
         self,
@@ -198,26 +267,27 @@ class TraciumAPIEndpoints:
         workspace_id: str | None = None,
     ) -> Sequence[dict[str, Any]]:
         """
-        Manually trigger drift detection checks for the current user's evaluations.
+        Manually trigger drift detection checks.
 
-        Args:
-            metrics: List of metric names to check (None = all)
-            alert_channels: Channels to send alerts to ["slack", "email", "webhook"]
-            workspace_id: Optional workspace ID to filter evaluations by
+        This is a synchronous operation as the user may want the results.
         """
-        params: dict[str, Any] = {}
-        if metrics is not None:
-            params["metrics"] = list(metrics)
-        if alert_channels is not None:
-            params["alert_channels"] = list(alert_channels)
-        if workspace_id is not None:
-            params["workspace_id"] = workspace_id
-        result = self._http.post("/drift/check", params=params)
-        if isinstance(result, list):
-            return result
-        if isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
-            return result["results"]
-        return [result]  # Fallback: wrap single dict in list
+        try:
+            params: dict[str, Any] = {}
+            if metrics is not None:
+                params["metrics"] = list(metrics)
+            if alert_channels is not None:
+                params["alert_channels"] = list(alert_channels)
+            if workspace_id is not None:
+                params["workspace_id"] = workspace_id
+            result = self._http.post("/drift/check", params=params)
+            if isinstance(result, list):
+                return result
+            if isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
+                return result["results"]
+            return [result] if result else []
+        except Exception as e:
+            logger.debug(f"trigger_drift_check failed (returning empty): {type(e).__name__}: {e}")
+            return []
 
     def trigger_prompt_embeddings_drift_check(
         self,
@@ -229,63 +299,58 @@ class TraciumAPIEndpoints:
         current_days: int = 1,
     ) -> Sequence[dict[str, Any]]:
         """
-        Manually trigger prompt embeddings drift detection checks.
+        Manually trigger prompt embeddings drift detection.
 
-        Args:
-            workspace_ids: List of workspace IDs to check (None = all workspaces for user)
-            alert_channels: Channels to send alerts to ["slack", "email", "webhook"]
-            similarity_threshold: Threshold for drift detection (0.05-0.1 recommended)
-            baseline_days: Number of days for baseline (default: 60)
-            current_days: Number of days for current period (default: 1)
+        This is a synchronous operation as the user may want the results.
         """
-        params: dict[str, Any] = {
-            "similarity_threshold": similarity_threshold,
-            "baseline_days": baseline_days,
-            "current_days": current_days,
-        }
-        if workspace_ids is not None:
-            params["workspace_ids"] = list(workspace_ids)
-        if alert_channels is not None:
-            params["alert_channels"] = list(alert_channels)
-        result = self._http.post("/drift/prompt-embeddings/check", params=params)
-        if isinstance(result, list):
-            return result
-        if isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
-            return result["results"]
-        return [result]  # Fallback: wrap single dict in list
+        try:
+            params: dict[str, Any] = {
+                "similarity_threshold": similarity_threshold,
+                "baseline_days": baseline_days,
+                "current_days": current_days,
+            }
+            if workspace_ids is not None:
+                params["workspace_ids"] = list(workspace_ids)
+            if alert_channels is not None:
+                params["alert_channels"] = list(alert_channels)
+            result = self._http.post("/drift/prompt-embeddings/check", params=params)
+            if isinstance(result, list):
+                return result
+            if isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
+                return result["results"]
+            return [result] if result else []
+        except Exception as e:
+            logger.debug(f"trigger_prompt_embeddings_drift_check failed: {type(e).__name__}: {e}")
+            return []
 
     def get_current_user(self) -> dict[str, Any]:
         """
-        Get current user information including plan.
-        The result is cached to avoid repeated API calls.
-        Returns:
-            Dict containing user info with 'plan' field (e.g., 'free', 'developer', 'startup', 'scale')
+        Get current user information.
+
+        This is a synchronous operation as we need the response.
         """
-        user_info = self._http.get("/auth/me")
-        if isinstance(user_info, dict):
-            return {"plan": user_info.get("plan", "free")}
-        raise TypeError(f"Expected dict from API response, got {type(user_info).__name__}")
+        try:
+            user_info = self._http.get("/auth/me")
+            if isinstance(user_info, dict):
+                return {"plan": user_info.get("plan", "free")}
+            return {"plan": "free"}
+        except Exception as e:
+            logger.debug(f"get_current_user failed (returning default): {type(e).__name__}: {e}")
+            return {"plan": "free"}
 
     def get_gantt_data(self, trace_id: str) -> dict[str, Any]:
         """
         Get Gantt chart visualization data for an agent trace.
 
-        Returns spans organized for Gantt chart visualization with:
-        - Flat span list with all relationships
-        - Hierarchical tree structure (parent-child)
-        - Parallel groups (spans with same parallel_group_id)
-        - Timeline (chronologically ordered spans)
-        - Summary statistics (total spans, max depth, parallel group count)
-
-        Args:
-            trace_id: The agent trace ID
-
-        Returns:
-            Dict containing gantt visualization data
+        This is a synchronous operation as the user needs the response.
         """
-        validated_trace_id = _validate_and_log("get_gantt_data", validate_trace_id, trace_id)
-        logger.debug("Fetching Gantt chart data", extra={"trace_id": validated_trace_id})
-        result = self._http.get(f"/agents/traces/{validated_trace_id}/gantt")
-        if isinstance(result, dict):
-            return result
-        raise TypeError(f"Expected dict from API response, got {type(result).__name__}")
+        try:
+            validated_trace_id = _validate_and_log("get_gantt_data", validate_trace_id, trace_id)
+            logger.debug("Fetching Gantt chart data", extra={"trace_id": validated_trace_id})
+            result = self._http.get(f"/agents/traces/{validated_trace_id}/gantt")
+            if isinstance(result, dict):
+                return result
+            return {}
+        except Exception as e:
+            logger.debug(f"get_gantt_data failed (returning empty): {type(e).__name__}: {e}")
+            return {}

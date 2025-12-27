@@ -1,29 +1,36 @@
-"""Context manager wrappers for Anthropic stream() method."""
+"""
+Context manager wrappers for Anthropic stream() method.
+
+All wrappers are designed to be fail-safe - any tracing errors will
+never break the streaming response for the user.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from ...core.client import TraciumClient
-from ...helpers.call_hierarchy import get_or_create_function_span
-from ...helpers.global_state import get_default_tags, get_options
-from ...instrumentation.auto_trace_tracker import (
-    _get_web_route_info,
-    close_auto_trace_if_needed,
-    get_current_function_for_span,
-    get_or_create_auto_trace,
-)
+from ...helpers.logging_config import get_logger
 from .stream_wrappers import (
     AsyncStreamWrapper,
     StreamWrapper,
 )
 from .utils import extract_model, normalize_messages
 
+logger = get_logger()
+
 
 def _create_span_context(
     client: TraciumClient, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> tuple[Any, Any, Any]:
     """Create trace and span context for streaming."""
+    from ...helpers.call_hierarchy import get_or_create_function_span
+    from ...helpers.global_state import get_default_tags, get_options
+    from ...instrumentation.auto_trace_tracker import (
+        get_current_function_for_span,
+        get_or_create_auto_trace,
+    )
+
     options = get_options()
     messages_payload = normalize_messages(args, kwargs)
     model_id = extract_model(kwargs) or options.default_model_id
@@ -60,7 +67,7 @@ def _create_span_context(
 class StreamContextManagerWrapper:
     """Wrapper for the context manager that wraps the stream."""
 
-    def __init__(self, original_cm: Any, span_handle: Any, span_context: Any):
+    def __init__(self, original_cm: Any, span_handle: Any | None, span_context: Any | None):
         self._original_cm = original_cm
         self._span_handle = span_handle
         self._span_context = span_context
@@ -68,37 +75,59 @@ class StreamContextManagerWrapper:
 
     def __enter__(self):
         original_stream = self._original_cm.__enter__()
+
+        # If we don't have tracing, return the original stream
+        if self._span_handle is None or self._span_context is None:
+            return original_stream
+
         self._wrapped_stream = StreamWrapper(original_stream, self._span_handle, self._span_context)
         return self._wrapped_stream
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._wrapped_stream:
-            aggregated_text = (
-                "".join(self._wrapped_stream._text_parts)
-                if self._wrapped_stream._text_parts
-                else "(streaming response)"
-            )
-            self._span_handle.record_output(aggregated_text)
-
-            if (
-                self._wrapped_stream._input_tokens is not None
-                or self._wrapped_stream._output_tokens is not None
-            ):
-                self._span_handle.set_token_usage(
-                    input_tokens=self._wrapped_stream._input_tokens,
-                    output_tokens=self._wrapped_stream._output_tokens,
+        try:
+            if self._wrapped_stream and self._span_handle:
+                aggregated_text = (
+                    "".join(self._wrapped_stream._text_parts)
+                    if self._wrapped_stream._text_parts
+                    else "(streaming response)"
                 )
+                self._span_handle.record_output(aggregated_text)
+
+                if (
+                    self._wrapped_stream._input_tokens is not None
+                    or self._wrapped_stream._output_tokens is not None
+                ):
+                    self._span_handle.set_token_usage(
+                        input_tokens=self._wrapped_stream._input_tokens,
+                        output_tokens=self._wrapped_stream._output_tokens,
+                    )
+        except Exception:
+            pass
 
         result = self._original_cm.__exit__(exc_type, exc_val, exc_tb)
-        self._span_context.__exit__(exc_type, exc_val, exc_tb)
-        close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
+
+        try:
+            if self._span_context:
+                self._span_context.__exit__(exc_type, exc_val, exc_tb)
+        except Exception:
+            pass
+
+        try:
+            from ...instrumentation.auto_trace_tracker import (
+                _get_web_route_info,
+                close_auto_trace_if_needed,
+            )
+            close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
+        except Exception:
+            pass
+
         return result
 
 
 class AsyncStreamContextManagerWrapper:
     """Wrapper for the async context manager that wraps the stream."""
 
-    def __init__(self, original_cm: Any, span_handle: Any, span_context: Any):
+    def __init__(self, original_cm: Any, span_handle: Any | None, span_context: Any | None):
         self._original_cm = original_cm
         self._span_handle = span_handle
         self._span_context = span_context
@@ -106,32 +135,54 @@ class AsyncStreamContextManagerWrapper:
 
     async def __aenter__(self):
         original_stream = await self._original_cm.__aenter__()
+
+        # If we don't have tracing, return the original stream
+        if self._span_handle is None or self._span_context is None:
+            return original_stream
+
         self._wrapped_stream = AsyncStreamWrapper(
             original_stream, self._span_handle, self._span_context
         )
         return self._wrapped_stream
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self._wrapped_stream:
-            aggregated_text = (
-                "".join(self._wrapped_stream._text_parts)
-                if self._wrapped_stream._text_parts
-                else "(streaming response)"
-            )
-            self._span_handle.record_output(aggregated_text)
-
-            if (
-                self._wrapped_stream._input_tokens is not None
-                or self._wrapped_stream._output_tokens is not None
-            ):
-                self._span_handle.set_token_usage(
-                    input_tokens=self._wrapped_stream._input_tokens,
-                    output_tokens=self._wrapped_stream._output_tokens,
+        try:
+            if self._wrapped_stream and self._span_handle:
+                aggregated_text = (
+                    "".join(self._wrapped_stream._text_parts)
+                    if self._wrapped_stream._text_parts
+                    else "(streaming response)"
                 )
+                self._span_handle.record_output(aggregated_text)
+
+                if (
+                    self._wrapped_stream._input_tokens is not None
+                    or self._wrapped_stream._output_tokens is not None
+                ):
+                    self._span_handle.set_token_usage(
+                        input_tokens=self._wrapped_stream._input_tokens,
+                        output_tokens=self._wrapped_stream._output_tokens,
+                    )
+        except Exception:
+            pass
 
         result = await self._original_cm.__aexit__(exc_type, exc_val, exc_tb)
-        self._span_context.__exit__(exc_type, exc_val, exc_tb)
-        close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
+
+        try:
+            if self._span_context:
+                self._span_context.__exit__(exc_type, exc_val, exc_tb)
+        except Exception:
+            pass
+
+        try:
+            from ...instrumentation.auto_trace_tracker import (
+                _get_web_route_info,
+                close_auto_trace_if_needed,
+            )
+            close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
+        except Exception:
+            pass
+
         return result
 
 
@@ -142,7 +193,14 @@ def wrap_stream_context_manager(
     kwargs: dict[str, Any],
 ) -> Any:
     """Wrap a stream context manager to trace the stream."""
-    _, span_handle, span_context = _create_span_context(client, args, kwargs)
+    span_handle = None
+    span_context = None
+
+    try:
+        _, span_handle, span_context = _create_span_context(client, args, kwargs)
+    except Exception as e:
+        logger.debug(f"Stream context manager tracing setup failed (continuing without tracing): {e}")
+
     return StreamContextManagerWrapper(stream_context_manager, span_handle, span_context)
 
 
@@ -153,5 +211,12 @@ async def wrap_stream_context_manager_async(
     kwargs: dict[str, Any],
 ) -> Any:
     """Wrap an async stream context manager to trace the stream."""
-    _, span_handle, span_context = _create_span_context(client, args, kwargs)
+    span_handle = None
+    span_context = None
+
+    try:
+        _, span_handle, span_context = _create_span_context(client, args, kwargs)
+    except Exception as e:
+        logger.debug(f"Async stream context manager tracing setup failed (continuing without tracing): {e}")
+
     return AsyncStreamContextManagerWrapper(stream_context_manager, span_handle, span_context)

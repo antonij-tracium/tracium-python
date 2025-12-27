@@ -1,73 +1,96 @@
-"""
-Generic ASGI/WSGI integration for route detection.
-
-Fallback integration that works with any framework by inspecting call stack.
-"""
+"""Generic WSGI instrumentation for Tracium."""
 
 from __future__ import annotations
 
-import inspect
-from types import FrameType
-from urllib.parse import urlparse
+import threading
+from collections.abc import Callable, Iterable, Iterator
+from functools import wraps
+from typing import Any, cast
 
 
-def get_generic_route_info() -> tuple[str, str] | None:
-    """
-    Extract route information by inspecting call stack for request objects.
+def wrap_wsgi_app(app: Callable) -> Callable:
+    if getattr(app, "_tracium_wrapped", False):
+        return app
 
-    Works with any ASGI/WSGI framework as a fallback.
+    _traces: dict[str, Any] = {}
+    _lock = threading.Lock()
 
-    Returns:
-        tuple: (route_path, display_name) or None if no request found
-    """
-    try:
-        frame = inspect.currentframe()
-        if not frame:
-            return None
+    @wraps(app)
+    def wrapped(environ: dict[str, Any], start_response: Callable) -> Iterable[bytes]:
+        from ...helpers.global_state import get_client, get_default_tags, get_options
 
-        current: FrameType | None = frame
-        for _ in range(10):
-            if current is None:
-                break
+        path = environ.get("PATH_INFO") or "/"
+        route_name = path.strip("/").replace("/", "-") if path != "/" else "index"
 
-            locals_dict = current.f_locals
-            for var_name in ["request", "req", "http_request", "wsgi_request"]:
-                if var_name not in locals_dict:
-                    continue
+        client = get_client()
+        options = get_options()
+        manager = client.agent_trace(
+            agent_name=route_name,
+            model_id=options.default_model_id,
+            version=options.default_version,
+            tags=get_default_tags(["@wsgi", f"@route:{route_name}"]),
+        )
+        handle = manager.__enter__()
+        trace_id = handle.id
 
-                request_obj = locals_dict[var_name]
-                for attr in ["path", "path_info", "url", "PATH_INFO"]:
-                    if not hasattr(request_obj, attr):
-                        continue
+        with _lock:
+            _traces[trace_id] = (manager, handle)
 
-                    path_value = getattr(request_obj, attr)
+        status_code = 200
+        finished = False
 
-                    if isinstance(path_value, str):
-                        route_path = path_value
-                        if route_path.startswith("http"):
-                            route_path = urlparse(route_path).path
+        def finish(error: Exception | None = None) -> None:
+            nonlocal finished
+            if finished:
+                return
+            finished = True
 
-                        if route_path:
-                            route_name = (
-                                route_path.strip("/").replace("/", "-")
-                                if route_path != "/"
-                                else "index"
-                            )
-                            return route_path, route_name
+            with _lock:
+                data = _traces.pop(trace_id, None)
+            if not data:
+                return
 
-                    elif hasattr(path_value, "path"):
-                        route_path = str(path_value.path)
-                        if route_path:
-                            route_name = (
-                                route_path.strip("/").replace("/", "-")
-                                if route_path != "/"
-                                else "index"
-                            )
-                            return route_path, route_name
+            mgr, hdl = data
+            try:
+                if error:
+                    hdl.mark_failed(f"{type(error).__name__}: {error}")
+                    mgr.__exit__(type(error), error, error.__traceback__)
+                else:
+                    mgr.__exit__(None, None, None)
+            except Exception:
+                pass
 
-            current = current.f_back
+        def wrapped_start_response(status: str, headers: list, exc_info=None):
+            nonlocal status_code
+            try:
+                status_code = int(status.split(" ", 1)[0])
+            except Exception:
+                status_code = 500
+            return start_response(status, headers, exc_info)
 
-        return None
-    except Exception as e:
-        print(f"Error getting generic route info: {e}")
-        return None
+        try:
+            result = app(environ, wrapped_start_response)
+        except Exception as e:
+            finish(e)
+            raise
+
+        def iterate() -> Iterator[bytes]:
+            # WSGI spec: result is an iterable, each item may be bytes or iterable of bytes
+            try:
+                for chunk in result:
+                    # Handle both bytes directly and iterables of bytes
+                    if isinstance(chunk, bytes):
+                        yield chunk
+                    else:
+                        # chunk is an iterable of bytes (e.g., list, generator)
+                        yield from cast(Iterable[bytes], chunk)
+            except Exception as e:
+                finish(e)
+                raise
+            finally:
+                finish()
+
+        return iterate()
+
+    wrapped._tracium_wrapped = True  # type: ignore
+    return wrapped
