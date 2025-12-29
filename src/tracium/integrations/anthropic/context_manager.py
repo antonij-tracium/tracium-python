@@ -116,6 +116,7 @@ class StreamContextManagerWrapper:
                 _get_web_route_info,
                 close_auto_trace_if_needed,
             )
+
             close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
         except Exception:
             pass
@@ -177,6 +178,7 @@ class AsyncStreamContextManagerWrapper:
                 _get_web_route_info,
                 close_auto_trace_if_needed,
             )
+
             close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
         except Exception:
             pass
@@ -197,7 +199,9 @@ def wrap_stream_context_manager(
     try:
         _, span_handle, span_context = _create_span_context(client, args, kwargs)
     except Exception as e:
-        logger.debug(f"Stream context manager tracing setup failed (continuing without tracing): {e}")
+        logger.debug(
+            f"Stream context manager tracing setup failed (continuing without tracing): {e}"
+        )
 
     return StreamContextManagerWrapper(stream_context_manager, span_handle, span_context)
 
@@ -215,6 +219,8 @@ async def wrap_stream_context_manager_async(
     try:
         _, span_handle, span_context = _create_span_context(client, args, kwargs)
     except Exception as e:
-        logger.debug(f"Async stream context manager tracing setup failed (continuing without tracing): {e}")
+        logger.debug(
+            f"Async stream context manager tracing setup failed (continuing without tracing): {e}"
+        )
 
     return AsyncStreamContextManagerWrapper(stream_context_manager, span_handle, span_context)

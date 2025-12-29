@@ -154,6 +154,7 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
 
         try:
             from ..helpers.parallel_tracker import register_span_creation
+
             detected_group_id, detected_seq_num = register_span_creation(
                 span_id=self.span_id,
                 parent_span_id=self.parent_span_id,
@@ -161,7 +162,9 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
                 provided_sequence_number=sequence_number,
             )
             self.parallel_group_id = parallel_group_id or detected_group_id
-            self.sequence_number = sequence_number if sequence_number is not None else detected_seq_num
+            self.sequence_number = (
+                sequence_number if sequence_number is not None else detected_seq_num
+            )
         except Exception:
             self.parallel_group_id = parallel_group_id
             self.sequence_number = sequence_number
@@ -181,6 +184,7 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
     def _get_tenant_id(self) -> str | None:
         try:
             from ..context.tenant_context import get_current_tenant
+
             return get_current_tenant()
         except Exception:
             return None
@@ -227,6 +231,7 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
             try:
                 if self.parallel_group_id is None:
                     from ..helpers.parallel_tracker import recheck_parallelism_for_span
+
                     detected_group_id, detected_seq_num = recheck_parallelism_for_span(
                         span_id=self.span_id,
                         parent_span_id=self.parent_span_id,
@@ -241,7 +246,10 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
             try:
                 if self.parent_span_id:
                     from ..utils.span_registry import ensure_parent_span_sent
-                    ensure_parent_span_sent(self.state.trace_id, self.parent_span_id, self.state.client)
+
+                    ensure_parent_span_sent(
+                        self.state.trace_id, self.parent_span_id, self.state.client
+                    )
             except Exception:
                 pass
 
@@ -255,6 +263,7 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
                 self._initially_sent = True
 
                 from ..utils.span_registry import mark_span_sent
+
                 mark_span_sent(self.state.trace_id, self.span_id)
             except Exception:
                 pass

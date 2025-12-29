@@ -61,17 +61,13 @@ def _finalize_stream(
 ) -> None:
     """Finalize stream: record output, tokens, and close span. Never raises."""
     try:
-        span_handle.record_output(
-            "".join(text_parts) if text_parts else "(streaming response)"
-        )
+        span_handle.record_output("".join(text_parts) if text_parts else "(streaming response)")
     except Exception:
         pass
 
     try:
         if input_tokens is not None or output_tokens is not None:
-            span_handle.set_token_usage(
-                input_tokens=input_tokens, output_tokens=output_tokens
-            )
+            span_handle.set_token_usage(input_tokens=input_tokens, output_tokens=output_tokens)
     except Exception:
         pass
 
@@ -85,6 +81,7 @@ def _finalize_stream(
             _get_web_route_info,
             close_auto_trace_if_needed,
         )
+
         close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
     except Exception:
         pass

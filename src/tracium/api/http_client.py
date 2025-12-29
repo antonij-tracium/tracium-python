@@ -111,7 +111,9 @@ class HTTPClient:
             Response data as dict or list. Returns empty dict on error if fail_open is True.
         """
         try:
-            return self._execute_request(method, path, json=json, params=params, extract_error_detail=extract_error_detail)
+            return self._execute_request(
+                method, path, json=json, params=params, extract_error_detail=extract_error_detail
+            )
         except Exception as e:
             if self._config.fail_open:
                 logger.debug(f"Request failed (fail-open mode): {type(e).__name__}: {e}")
@@ -192,6 +194,7 @@ class HTTPClient:
                 response = _make_request()
             else:
                 from ..helpers.retry import RetryConfig
+
                 retry_config = self._config.retry_config or RetryConfig()
                 response = retry_with_backoff(
                     _make_request,

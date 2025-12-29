@@ -85,7 +85,11 @@ def _patch_legacy_sdk(client: TraciumClient) -> None:
             original_generate_content = GenerativeModel.generate_content
 
             def traced_generate_content(self, *args: Any, **kwargs: Any) -> Any:
-                model_name = _extract_model_name(self) or (options.default_model_id if options else None) or "gemini-pro"
+                model_name = (
+                    _extract_model_name(self)
+                    or (options.default_model_id if options else None)
+                    or "gemini-pro"
+                )
                 return _trace_google_call(
                     client=client,
                     original_fn=lambda: original_generate_content(self, *args, **kwargs),
@@ -104,7 +108,11 @@ def _patch_legacy_sdk(client: TraciumClient) -> None:
             original_generate_content_async = GenerativeModel.generate_content_async
 
             async def traced_generate_content_async(self, *args: Any, **kwargs: Any) -> Any:
-                model_name = _extract_model_name(self) or (options.default_model_id if options else None) or "gemini-pro"
+                model_name = (
+                    _extract_model_name(self)
+                    or (options.default_model_id if options else None)
+                    or "gemini-pro"
+                )
                 return await _trace_google_call_async(
                     client=client,
                     original_fn=lambda: original_generate_content_async(self, *args, **kwargs),
@@ -140,7 +148,9 @@ def _patch_new_sdk(client: TraciumClient) -> None:
             def traced_generate_content_new(self, *args: Any, **kwargs: Any) -> Any:
                 model_name = kwargs.get("model")
                 if not model_name:
-                    model_name = (options.default_model_id if options else None) or "gemini-2.0-flash-exp"
+                    model_name = (
+                        options.default_model_id if options else None
+                    ) or "gemini-2.0-flash-exp"
 
                 return _trace_google_call(
                     client=client,
@@ -161,7 +171,9 @@ def _patch_new_sdk(client: TraciumClient) -> None:
 
             async def traced_generate_content_async_new(self, *args: Any, **kwargs: Any) -> Any:
                 model_name = (
-                    kwargs.get("model") or (options.default_model_id if options else None) or "gemini-2.0-flash-exp"
+                    kwargs.get("model")
+                    or (options.default_model_id if options else None)
+                    or "gemini-2.0-flash-exp"
                 )
 
                 return await _trace_google_call_async(
@@ -227,6 +239,7 @@ def _trace_google_call(
         if span_handle and span_context:
             try:
                 import traceback
+
                 span_handle.record_output({"error": str(e), "traceback": traceback.format_exc()})
                 span_handle.mark_failed(str(e))
             except Exception:
@@ -234,6 +247,7 @@ def _trace_google_call(
 
             try:
                 from ..instrumentation.auto_trace_tracker import get_current_auto_trace_context
+
                 auto_context = get_current_auto_trace_context()
                 if auto_context:
                     auto_context.mark_span_failed()
@@ -250,6 +264,7 @@ def _trace_google_call(
                     _get_web_route_info,
                     close_auto_trace_if_needed,
                 )
+
                 is_web_context = _get_web_route_info() is not None
                 close_auto_trace_if_needed(force_close=is_web_context, error=e)
             except Exception:
@@ -280,6 +295,7 @@ def _trace_google_call(
                 _get_web_route_info,
                 close_auto_trace_if_needed,
             )
+
             is_web_context = _get_web_route_info() is not None
             close_auto_trace_if_needed(force_close=is_web_context)
     except Exception as e:
@@ -342,6 +358,7 @@ async def _trace_google_call_async(
 
             try:
                 from ..instrumentation.auto_trace_tracker import get_current_auto_trace_context
+
                 auto_context = get_current_auto_trace_context()
                 if auto_context:
                     auto_context.mark_span_failed()
@@ -353,6 +370,7 @@ async def _trace_google_call_async(
                     _get_web_route_info,
                     close_auto_trace_if_needed,
                 )
+
                 is_web_context = _get_web_route_info() is not None
                 close_auto_trace_if_needed(force_close=is_web_context, error=exc)
             except Exception:
@@ -383,6 +401,7 @@ async def _trace_google_call_async(
                 _get_web_route_info,
                 close_auto_trace_if_needed,
             )
+
             is_web_context = _get_web_route_info() is not None
             close_auto_trace_if_needed(force_close=is_web_context)
     except Exception as e:

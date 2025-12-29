@@ -111,7 +111,9 @@ class BackgroundSender:
             if self._config.security_config:
                 is_allowed, wait_time = check_rate_limit(self._config.security_config)
                 if not is_allowed:
-                    logger.debug(f"Rate limited, waiting {wait_time}s before request to {request.path}")
+                    logger.debug(
+                        f"Rate limited, waiting {wait_time}s before request to {request.path}"
+                    )
                     time.sleep(wait_time)
 
             payload = None
@@ -125,7 +127,9 @@ class BackgroundSender:
 
             for attempt in range(retry_config.max_retries + 1):
                 try:
-                    response = self._make_request(request.method, request.path, payload, request.params, request.headers)
+                    response = self._make_request(
+                        request.method, request.path, payload, request.params, request.headers
+                    )
                     response.raise_for_status()
 
                     if request.callback:
@@ -134,7 +138,9 @@ class BackgroundSender:
                         except Exception:
                             pass
 
-                    logger.debug(f"Background request successful: {request.method.value} {request.path}")
+                    logger.debug(
+                        f"Background request successful: {request.method.value} {request.path}"
+                    )
                     return
 
                 except httpx.HTTPStatusError as e:
@@ -276,4 +282,3 @@ def shutdown_background_sender() -> None:
         if _background_sender is not None:
             _background_sender.shutdown()
             _background_sender = None
-

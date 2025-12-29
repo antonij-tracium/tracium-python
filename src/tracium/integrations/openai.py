@@ -65,13 +65,13 @@ def _finalize_stream(
             _get_web_route_info,
             close_auto_trace_if_needed,
         )
+
         close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
     except Exception:
         pass
 
 
 class StreamWrapper:
-
     def __init__(self, original_stream: Any, span_handle: Any, span_context: Any):
         self._stream = original_stream
         self._span_handle = span_handle
@@ -100,7 +100,9 @@ class StreamWrapper:
         except StopIteration:
             if not self._finalized:
                 self._finalized = True
-                _finalize_stream(self._span_handle, self._span_context, self._text_parts, self._tokens)
+                _finalize_stream(
+                    self._span_handle, self._span_context, self._text_parts, self._tokens
+                )
             raise
 
 
@@ -135,7 +137,9 @@ class AsyncStreamWrapper:
         except StopAsyncIteration:
             if not self._finalized:
                 self._finalized = True
-                _finalize_stream(self._span_handle, self._span_context, self._text_parts, self._tokens)
+                _finalize_stream(
+                    self._span_handle, self._span_context, self._text_parts, self._tokens
+                )
             raise
 
 
@@ -263,6 +267,7 @@ def _trace_openai_call(
 ) -> Any:
     try:
         from ..context.trace_context import current_trace
+
         if (trace := current_trace()) and trace.tags and "@langchain" in trace.tags:
             return original_fn()
     except Exception:
@@ -331,6 +336,7 @@ def _trace_openai_call(
                 _get_web_route_info,
                 close_auto_trace_if_needed,
             )
+
             close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
     except Exception as e:
         logger.debug(f"OpenAI response tracing failed (ignored): {e}")
@@ -346,6 +352,7 @@ async def _trace_openai_call_async(
 ) -> Any:
     try:
         from ..context.trace_context import current_trace
+
         if (trace := current_trace()) and trace.tags and "@langchain" in trace.tags:
             return await original_fn()
     except Exception:
@@ -414,6 +421,7 @@ async def _trace_openai_call_async(
                 _get_web_route_info,
                 close_auto_trace_if_needed,
             )
+
             close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
     except Exception as e:
         logger.debug(f"OpenAI async response tracing failed (ignored): {e}")

@@ -78,6 +78,7 @@ def _close_trace_on_error(error: Exception, span_handle: Any, span_context: Any)
 
     try:
         from ...instrumentation.auto_trace_tracker import get_current_auto_trace_context
+
         auto_context = get_current_auto_trace_context()
         if auto_context:
             auto_context.mark_span_failed()
@@ -94,6 +95,7 @@ def _close_trace_on_error(error: Exception, span_handle: Any, span_context: Any)
             _get_web_route_info,
             close_auto_trace_if_needed,
         )
+
         close_auto_trace_if_needed(force_close=_get_web_route_info() is not None, error=error)
     except Exception:
         pass
@@ -108,6 +110,7 @@ def trace_anthropic_call(
     """Trace a synchronous Anthropic API call."""
     try:
         from ...helpers.global_state import is_in_langchain_callback
+
         if is_in_langchain_callback():
             return original_fn()
     except Exception:
@@ -147,6 +150,7 @@ def trace_anthropic_call(
                 _get_web_route_info,
                 close_auto_trace_if_needed,
             )
+
             close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
     except Exception as e:
         logger.debug(f"Anthropic response tracing failed (ignored): {e}")
@@ -163,6 +167,7 @@ async def trace_anthropic_call_async(
     """Trace an asynchronous Anthropic API call."""
     try:
         from ...helpers.global_state import is_in_langchain_callback
+
         if is_in_langchain_callback():
             return await original_fn()
     except Exception:
@@ -202,6 +207,7 @@ async def trace_anthropic_call_async(
                 _get_web_route_info,
                 close_auto_trace_if_needed,
             )
+
             close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
     except Exception as e:
         logger.debug(f"Anthropic async response tracing failed (ignored): {e}")

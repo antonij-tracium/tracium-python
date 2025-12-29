@@ -129,7 +129,9 @@ class TraciumAPIEndpoints:
         This operation is non-blocking - spans are queued for background processing.
         """
         try:
-            validated_trace_id = _validate_and_log("record_agent_spans", validate_trace_id, trace_id)
+            validated_trace_id = _validate_and_log(
+                "record_agent_spans", validate_trace_id, trace_id
+            )
             spans_list = list(spans)
             if not spans_list:
                 return []
@@ -143,7 +145,9 @@ class TraciumAPIEndpoints:
                 validated_span = dict(span)
                 try:
                     if "span_type" in validated_span:
-                        validated_span["span_type"] = validate_span_type(str(validated_span["span_type"]))
+                        validated_span["span_type"] = validate_span_type(
+                            str(validated_span["span_type"])
+                        )
                     if "span_id" in validated_span:
                         validated_span["span_id"] = validate_span_id(str(validated_span["span_id"]))
                         del validated_span["span_id"]
@@ -207,7 +211,9 @@ class TraciumAPIEndpoints:
     ) -> dict[str, Any]:
         """Complete an agent trace asynchronously."""
         try:
-            validated_trace_id = _validate_and_log("complete_agent_trace", validate_trace_id, trace_id)
+            validated_trace_id = _validate_and_log(
+                "complete_agent_trace", validate_trace_id, trace_id
+            )
             validated_tags = _validate_and_log("complete_agent_trace", validate_tags, tags)
 
             payload: dict[str, Any] = {}
@@ -236,7 +242,9 @@ class TraciumAPIEndpoints:
         try:
             validated_trace_id = _validate_and_log("fail_agent_trace", validate_trace_id, trace_id)
             validated_error = (
-                _validate_and_log("fail_agent_trace", validate_error_message, error) if error else None
+                _validate_and_log("fail_agent_trace", validate_error_message, error)
+                if error
+                else None
             )
 
             payload: dict[str, Any] = {}
@@ -275,7 +283,11 @@ class TraciumAPIEndpoints:
             result = self._http.post("/drift/check", params=params)
             if isinstance(result, list):
                 return result
-            if isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
+            if (
+                isinstance(result, dict)
+                and "results" in result
+                and isinstance(result["results"], list)
+            ):
                 return result["results"]
             return [result] if result else []
         except Exception as e:
@@ -309,7 +321,11 @@ class TraciumAPIEndpoints:
             result = self._http.post("/drift/prompt-embeddings/check", params=params)
             if isinstance(result, list):
                 return result
-            if isinstance(result, dict) and "results" in result and isinstance(result["results"], list):
+            if (
+                isinstance(result, dict)
+                and "results" in result
+                and isinstance(result["results"], list)
+            ):
                 return result["results"]
             return [result] if result else []
         except Exception as e:

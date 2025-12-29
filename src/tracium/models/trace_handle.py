@@ -160,7 +160,11 @@ class AgentTraceHandle:
                 tags=self._state.tags or None,
             )
             self._state.finished = True
-            return payload if isinstance(payload, dict) else {"trace_id": self._state.trace_id, "status": "completed"}
+            return (
+                payload
+                if isinstance(payload, dict)
+                else {"trace_id": self._state.trace_id, "status": "completed"}
+            )
         except Exception as e:
             logger.debug(f"finish() failed (ignored): {type(e).__name__}: {e}")
             self._state.finished = True
@@ -191,7 +195,11 @@ class AgentTraceHandle:
                 error=error,
             )
             self._state.finished = True
-            return payload if isinstance(payload, dict) else {"trace_id": self._state.trace_id, "status": "failed"}
+            return (
+                payload
+                if isinstance(payload, dict)
+                else {"trace_id": self._state.trace_id, "status": "failed"}
+            )
         except Exception as e:
             logger.debug(f"fail() failed (ignored): {type(e).__name__}: {e}")
             self._state.finished = True
@@ -221,7 +229,9 @@ class AgentTraceHandle:
             validated_name = _validate_and_log("span", validate_name, name)
             validated_tags = _validate_and_log("span", validate_tags, tags)
             validated_parent_span_id = (
-                _validate_and_log("span", validate_span_id, parent_span_id) if parent_span_id else None
+                _validate_and_log("span", validate_span_id, parent_span_id)
+                if parent_span_id
+                else None
             )
             validated_span_id = (
                 _validate_and_log("span", validate_span_id, span_id) if span_id else None
@@ -359,7 +369,9 @@ class AgentTraceManager(
                 if self._explicit_trace_id
                 else None
             )
-            validated_tags = _validate_and_log("AgentTraceManager._start", validate_tags, self._tags)
+            validated_tags = _validate_and_log(
+                "AgentTraceManager._start", validate_tags, self._tags
+            )
 
             self._agent_name = validated_agent_name
             self._explicit_trace_id = validated_trace_id
@@ -401,6 +413,7 @@ class AgentTraceManager(
 
             try:
                 from ..context.trace_context import CURRENT_TRACE_STATE
+
                 self._token = CURRENT_TRACE_STATE.set(state)
             except Exception:
                 pass
@@ -423,6 +436,7 @@ class AgentTraceManager(
 
             try:
                 from ..context.trace_context import CURRENT_TRACE_STATE
+
                 self._token = CURRENT_TRACE_STATE.set(state)
             except Exception:
                 pass
@@ -493,6 +507,7 @@ class AgentTraceManager(
             try:
                 if self._token is not None:
                     from ..context.trace_context import CURRENT_TRACE_STATE
+
                     CURRENT_TRACE_STATE.reset(self._token)
             except Exception:
                 pass

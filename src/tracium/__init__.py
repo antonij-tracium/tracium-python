@@ -222,6 +222,7 @@ def trace(api_key: str | None = None, **kwargs: Any) -> TraciumClient:
 
             try:
                 import flask
+
                 if isinstance(app, flask.Flask):
                     continue
             except ImportError:
