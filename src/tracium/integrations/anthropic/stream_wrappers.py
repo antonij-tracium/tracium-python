@@ -117,7 +117,6 @@ class StreamWrapper:
         try:
             chunk = next(self._stream)
 
-            # Try to extract text from chunk - never fail
             try:
                 chunk_type = getattr(chunk, "type", None)
 
@@ -178,7 +177,6 @@ class AsyncStreamWrapper:
         try:
             chunk = await self._stream.__anext__()
 
-            # Try to extract text from chunk - never fail
             try:
                 chunk_type = getattr(chunk, "type", None)
 

@@ -113,11 +113,9 @@ class TraciumAPIEndpoints:
             result = self._http.post("/agents/traces", json=payload)
             if isinstance(result, dict):
                 return result
-            # Return a minimal valid response
             return {"id": validated_trace_id}
         except Exception as e:
             logger.debug(f"start_agent_trace failed (returning fallback): {type(e).__name__}: {e}")
-            # Return fallback response with provided trace_id if available
             return {"id": trace_id} if trace_id else {}
 
     def record_agent_spans(
@@ -136,7 +134,7 @@ class TraciumAPIEndpoints:
             if not spans_list:
                 return []
             if len(spans_list) > 1000:
-                spans_list = spans_list[:1000]  # Truncate instead of raising
+                spans_list = spans_list[:1000]
 
             validated_spans: list[dict[str, Any]] = []
             for span in spans_list:
@@ -167,10 +165,8 @@ class TraciumAPIEndpoints:
                 extra={"trace_id": validated_trace_id, "span_count": len(validated_spans)},
             )
 
-            # Use async posting for telemetry data - non-blocking
             self._http.post_async(f"/agents/traces/{validated_trace_id}/spans", json=payload)
 
-            # Return the validated spans as acknowledgment
             return validated_spans
         except Exception as e:
             logger.debug(f"record_agent_spans failed (ignored): {type(e).__name__}: {e}")
@@ -194,7 +190,6 @@ class TraciumAPIEndpoints:
 
             payload = {"spans": [validated_span]}
 
-            # Use async posting - non-blocking
             self._http.post_async(f"/agents/traces/{validated_trace_id}/spans", json=payload)
 
             return validated_span
@@ -223,7 +218,6 @@ class TraciumAPIEndpoints:
 
             logger.debug("Completing agent trace", extra={"trace_id": validated_trace_id})
 
-            # Use async posting - non-blocking
             self._http.post_async(f"/agents/traces/{validated_trace_id}/complete", json=payload)
 
             return {"trace_id": validated_trace_id, "status": "completed"}
@@ -251,7 +245,6 @@ class TraciumAPIEndpoints:
 
             logger.debug("Failing agent trace", extra={"trace_id": validated_trace_id})
 
-            # Use async posting - non-blocking
             self._http.post_async(f"/agents/traces/{validated_trace_id}/fail", json=payload)
 
             return {"trace_id": validated_trace_id, "status": "failed"}

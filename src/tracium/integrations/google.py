@@ -187,7 +187,6 @@ def _trace_google_call(
     model_name: str,
 ) -> Any:
     """Trace a synchronous Google API call."""
-    # Initialize tracing - if this fails, we still run the original function
     trace_handle = None
     span_handle = None
     span_context = None
@@ -222,7 +221,6 @@ def _trace_google_call(
     except Exception as e:
         logger.debug(f"Google trace setup failed (continuing without tracing): {e}")
 
-    # Execute the original function
     try:
         response = original_fn()
     except Exception as e:
@@ -258,7 +256,6 @@ def _trace_google_call(
                 pass
         raise
 
-    # Process response - if this fails, still return the response
     try:
         if span_handle and span_context:
             usage = getattr(response, "usage_metadata", None)
@@ -300,7 +297,6 @@ async def _trace_google_call_async(
     model_name: str,
 ) -> Any:
     """Trace an asynchronous Google API call."""
-    # Initialize tracing - if this fails, we still run the original function
     trace_handle = None
     span_handle = None
     span_context = None
@@ -335,7 +331,6 @@ async def _trace_google_call_async(
     except Exception as e:
         logger.debug(f"Google async trace setup failed (continuing without tracing): {e}")
 
-    # Execute the original function
     try:
         response = await original_fn()
     except Exception as exc:
@@ -364,7 +359,6 @@ async def _trace_google_call_async(
                 pass
         raise
 
-    # Process response - if this fails, still return the response
     try:
         if span_handle and span_context:
             usage = getattr(response, "usage_metadata", None)

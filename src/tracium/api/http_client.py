@@ -86,7 +86,6 @@ class HTTPClient:
                 headers=headers if headers else None,
             )
         except Exception as e:
-            # Never propagate errors to user code
             logger.debug(f"Failed to queue async request: {type(e).__name__}: {e}")
 
     def request(
@@ -114,7 +113,6 @@ class HTTPClient:
         try:
             return self._execute_request(method, path, json=json, params=params, extract_error_detail=extract_error_detail)
         except Exception as e:
-            # Final catch-all - ensure we never break user code
             if self._config.fail_open:
                 logger.debug(f"Request failed (fail-open mode): {type(e).__name__}: {e}")
                 return {}
@@ -210,7 +208,6 @@ class HTTPClient:
             )
 
             json_data = response.json()
-            # Allow both dict and list responses - some endpoints return lists
             if not isinstance(json_data, (dict | list)):
                 raise TypeError(
                     f"Expected dict or list from API response, got {type(json_data).__name__}"

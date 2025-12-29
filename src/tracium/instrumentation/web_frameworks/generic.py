@@ -75,14 +75,11 @@ def wrap_wsgi_app(app: Callable) -> Callable:
             raise
 
         def iterate() -> Iterator[bytes]:
-            # WSGI spec: result is an iterable, each item may be bytes or iterable of bytes
             try:
                 for chunk in result:
-                    # Handle both bytes directly and iterables of bytes
                     if isinstance(chunk, bytes):
                         yield chunk
                     else:
-                        # chunk is an iterable of bytes (e.g., list, generator)
                         yield from cast(Iterable[bytes], chunk)
             except Exception as e:
                 finish(e)

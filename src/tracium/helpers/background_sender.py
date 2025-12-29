@@ -70,10 +70,8 @@ class BackgroundSender:
         self._started = False
         self._lock = threading.Lock()
 
-        # Start worker thread
         self._start_worker()
 
-        # Register cleanup on exit
         atexit.register(self._cleanup)
 
     def _start_worker(self) -> None:
@@ -93,41 +91,35 @@ class BackgroundSender:
         """Main worker loop that processes queued requests."""
         while not self._shutdown.is_set():
             try:
-                # Wait for a request with timeout to allow checking shutdown
                 try:
                     request = self._queue.get(timeout=0.1)
                 except queue.Empty:
                     continue
 
                 if request is None:
-                    # Shutdown signal
                     break
 
                 self._process_request(request)
                 self._queue.task_done()
 
             except Exception as e:
-                # Never let worker thread die from an exception
                 logger.debug(f"Background sender error (ignored): {type(e).__name__}: {e}")
 
     def _process_request(self, request: QueuedRequest) -> None:
         """Process a single queued request with retry logic."""
         try:
-            # Check rate limit
             if self._config.security_config:
                 is_allowed, wait_time = check_rate_limit(self._config.security_config)
                 if not is_allowed:
                     logger.debug(f"Rate limited, waiting {wait_time}s before request to {request.path}")
                     time.sleep(wait_time)
 
-            # Prepare payload
             payload = None
             if request.json is not None and self._config.security_config:
                 payload = redact_telemetry_payload(request.json, self._config.security_config)
             elif request.json is not None:
                 payload = request.json
 
-            # Execute request with retry
             retry_config = self._config.retry_config or RetryConfig()
             last_exception: Exception | None = None
 
@@ -136,7 +128,6 @@ class BackgroundSender:
                     response = self._make_request(request.method, request.path, payload, request.params, request.headers)
                     response.raise_for_status()
 
-                    # Call success callback if provided
                     if request.callback:
                         try:
                             request.callback(response.json())
@@ -163,7 +154,6 @@ class BackgroundSender:
                     delay = calculate_backoff_delay(attempt, retry_config)
                     time.sleep(delay)
 
-            # All retries exhausted - log and continue
             if last_exception:
                 logger.debug(
                     f"Background request failed after retries: {request.method.value} {request.path} - "
@@ -171,7 +161,6 @@ class BackgroundSender:
                 )
 
         except Exception as e:
-            # Catch-all for any unexpected errors
             logger.debug(f"Background request error (ignored): {type(e).__name__}: {e}")
 
     def _make_request(
@@ -248,13 +237,11 @@ class BackgroundSender:
         try:
             self._shutdown.set()
 
-            # Signal worker to stop
             try:
                 self._queue.put_nowait(None)
             except Exception:
                 pass
 
-            # Wait briefly for worker to finish
             if self._worker_thread and self._worker_thread.is_alive():
                 self._worker_thread.join(timeout=self._flush_timeout)
 
@@ -266,7 +253,6 @@ class BackgroundSender:
         self._cleanup()
 
 
-# Global instance management
 _background_sender: BackgroundSender | None = None
 _sender_lock = threading.Lock()
 

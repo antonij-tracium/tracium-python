@@ -194,17 +194,15 @@ def trace(api_key: str | None = None, **kwargs: Any) -> TraciumClient:
 
     Example:
         >>> def application(environ, start_response):
-        ...     # WSGI app with LLM calls
         ...     pass
         >>>
-        >>> tracium.trace()  # Auto-detects and wraps 'application'
+        >>> tracium.trace()
     """
     kwargs.setdefault("auto_instrument_langchain", True)
     kwargs.setdefault("auto_instrument_langgraph", True)
     kwargs.setdefault("auto_instrument_llm_clients", True)
     client = init(api_key=api_key, **kwargs)
 
-    # Auto-detect and wrap WSGI apps
     import inspect
     import sys
 
@@ -222,7 +220,6 @@ def trace(api_key: str | None = None, **kwargs: Any) -> TraciumClient:
             if not callable(app) or getattr(app, "_tracium_wrapped", False):
                 continue
 
-            # Skip Flask/Django apps
             try:
                 import flask
                 if isinstance(app, flask.Flask):
@@ -233,7 +230,6 @@ def trace(api_key: str | None = None, **kwargs: Any) -> TraciumClient:
             if "django" in getattr(type(app), "__module__", "").lower():
                 continue
 
-            # Check WSGI signature (2+ params)
             try:
                 if len(list(inspect.signature(app).parameters)) < 2:
                     continue

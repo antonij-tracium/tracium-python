@@ -106,7 +106,6 @@ def trace_anthropic_call(
     kwargs: dict[str, Any],
 ) -> Any:
     """Trace a synchronous Anthropic API call."""
-    # Check if we should skip tracing
     try:
         from ...helpers.global_state import is_in_langchain_callback
         if is_in_langchain_callback():
@@ -114,7 +113,6 @@ def trace_anthropic_call(
     except Exception:
         pass
 
-    # Initialize tracing - if this fails, we still run the original function
     trace_handle = None
     span_handle = None
     span_context = None
@@ -126,7 +124,6 @@ def trace_anthropic_call(
 
     is_streaming = kwargs.get("stream", False)
 
-    # Execute the original function
     try:
         response = original_fn()
     except Exception as e:
@@ -134,7 +131,6 @@ def trace_anthropic_call(
             _close_trace_on_error(e, span_handle, span_context)
         raise
 
-    # Process response - if this fails, still return the response
     try:
         if span_handle and span_context:
             if is_streaming or (hasattr(response, "__iter__") and not hasattr(response, "usage")):
@@ -165,7 +161,6 @@ async def trace_anthropic_call_async(
     kwargs: dict[str, Any],
 ) -> Any:
     """Trace an asynchronous Anthropic API call."""
-    # Check if we should skip tracing
     try:
         from ...helpers.global_state import is_in_langchain_callback
         if is_in_langchain_callback():
@@ -173,7 +168,6 @@ async def trace_anthropic_call_async(
     except Exception:
         pass
 
-    # Initialize tracing - if this fails, we still run the original function
     trace_handle = None
     span_handle = None
     span_context = None
@@ -185,7 +179,6 @@ async def trace_anthropic_call_async(
 
     is_streaming = kwargs.get("stream", False)
 
-    # Execute the original function
     try:
         response = await original_fn()
     except Exception as exc:
@@ -193,7 +186,6 @@ async def trace_anthropic_call_async(
             _close_trace_on_error(exc, span_handle, span_context)
         raise
 
-    # Process response - if this fails, still return the response
     try:
         if span_handle and span_context:
             if is_streaming or (hasattr(response, "__aiter__") and not hasattr(response, "usage")):

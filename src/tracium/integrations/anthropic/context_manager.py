@@ -76,7 +76,6 @@ class StreamContextManagerWrapper:
     def __enter__(self):
         original_stream = self._original_cm.__enter__()
 
-        # If we don't have tracing, return the original stream
         if self._span_handle is None or self._span_context is None:
             return original_stream
 
@@ -136,7 +135,6 @@ class AsyncStreamContextManagerWrapper:
     async def __aenter__(self):
         original_stream = await self._original_cm.__aenter__()
 
-        # If we don't have tracing, return the original stream
         if self._span_handle is None or self._span_context is None:
             return original_stream
 

@@ -25,7 +25,6 @@ def _wrap_executor_method(
 ) -> Callable[..., Any]:
     @functools.wraps(method)
     def wrapper(self, *args: Any, **kwargs: Any) -> Any:
-        # Initialize tracing - if this fails, we still run the original method
         trace_handle = None
         span_context = None
         span_handle = None
@@ -61,11 +60,9 @@ def _wrap_executor_method(
 
         start = time.time()
 
-        # Execute the original method
         try:
             result = method(self, *args, **kwargs)
         except Exception as exc:
-            # Record error in span if we have one
             if span_handle and span_context:
                 try:
                     latency_ms = int((time.time() - start) * 1000)
@@ -76,7 +73,6 @@ def _wrap_executor_method(
                     pass
             raise
 
-        # Record success - if this fails, still return the result
         try:
             if span_handle and span_context:
                 latency_ms = int((time.time() - start) * 1000)
@@ -96,7 +92,6 @@ def _wrap_executor_method_async(
 ) -> Callable[..., Any]:
     @functools.wraps(method)
     async def wrapper(self, *args: Any, **kwargs: Any) -> Any:
-        # Initialize tracing - if this fails, we still run the original method
         trace_handle = None
         span_context = None
         span_handle = None
@@ -132,11 +127,9 @@ def _wrap_executor_method_async(
 
         start = time.time()
 
-        # Execute the original method
         try:
             result = await method(self, *args, **kwargs)
         except Exception as exc:
-            # Record error in span if we have one
             if span_handle and span_context:
                 try:
                     latency_ms = int((time.time() - start) * 1000)
@@ -147,7 +140,6 @@ def _wrap_executor_method_async(
                     pass
             raise
 
-        # Record success - if this fails, still return the result
         try:
             if span_handle and span_context:
                 latency_ms = int((time.time() - start) * 1000)
@@ -171,13 +163,11 @@ def register_langgraph_hooks(client: TraciumClient) -> None:
         return
 
     try:
-        # Wrap sync method
         if hasattr(Executor, "invoke"):
             original = getattr(Executor, "invoke")
             wrapped = _wrap_executor_method(client, original, "invoke")
             setattr(Executor, "invoke", wrapped)
 
-        # Wrap async method
         if hasattr(Executor, "ainvoke"):
             original = getattr(Executor, "ainvoke")
             wrapped = _wrap_executor_method_async(client, original, "ainvoke")
