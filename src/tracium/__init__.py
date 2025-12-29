@@ -43,6 +43,7 @@ from .helpers.validation import (
 )
 from .instrumentation.auto_instrumentation import configure_auto_instrumentation
 from .instrumentation.decorators import agent_span, agent_trace, span
+from .instrumentation.web_frameworks.generic import wrap_wsgi_app
 from .models.trace_handle import AgentTraceHandle, AgentTraceManager
 
 __all__ = [
@@ -60,6 +61,7 @@ __all__ = [
     "TraciumClientConfig",
     "agent_span",
     "span",
+    "wrap_wsgi_app",
     "__version__",
     "configure_logging",
     "get_logger",
@@ -183,55 +185,62 @@ def start_trace(
 
 def trace(api_key: str | None = None, **kwargs: Any) -> TraciumClient:
     """
-    ONE-LINE SETUP: Initialize Tracium and enable automatic tracing for all supported libraries.
+    ONE-LINE SETUP: Initialize Tracium with automatic tracing.
 
-    This is the simplest way to get started with Tracium. Just call this once at the
-    start of your application and all LLM calls will be automatically tracked.
+    Call this once at the start of your application. All LLM calls will be tracked.
+    For WSGI apps, define your app first, then call trace().
 
-    Supported libraries (automatically instrumented):
-    - OpenAI (GPT-4, GPT-3.5, etc.)
-    - Anthropic (Claude)
-    - Google Generative AI (Gemini)
-    - LangChain
-    - LangGraph
-
-    Args:
-        api_key: Tracium API key (or set TRACIUM_API_KEY env var)
-        default_version: Optional version string for your application. If provided,
-            all automatic traces will use this version. If not provided, version will
-            be None (not the SDK version).
-        **kwargs: Additional options passed to init() (e.g., default_agent_name,
-            default_tags, default_metadata)
-
-    Returns:
-        TraciumClient: The initialized client
+    Supported: OpenAI, Anthropic, Google AI, LangChain, LangGraph, WSGI apps.
 
     Example:
-        >>> import tracium
-        >>> tracium.trace(api_key="sk_live_...")
+        >>> def application(environ, start_response):
+        ...     pass
         >>>
-        >>> tracium.trace(api_key="sk_live_...", default_version="1.2.3")
-        >>>
-        >>> import openai
-        >>> response = openai.ChatCompletion.create(
-        ...     model="gpt-4",
-        ...     messages=[{"role": "user", "content": "Hello!"}]
-        ... )
-        >>>
-        >>> import anthropic
-        >>> client = anthropic.Anthropic()
-        >>> response = client.messages.create(
-        ...     model="claude-3-opus-20240229",
-        ...     messages=[{"role": "user", "content": "Hello!"}]
-        ... )
-        >>>
-        >>> import google.generativeai as genai
-        >>> model = genai.GenerativeModel('gemini-pro')
-        >>> response = model.generate_content("Hello!")
-
-    For more control, use :func:`init` instead and manually configure options.
+        >>> tracium.trace()
     """
     kwargs.setdefault("auto_instrument_langchain", True)
     kwargs.setdefault("auto_instrument_langgraph", True)
     kwargs.setdefault("auto_instrument_llm_clients", True)
-    return init(api_key=api_key, **kwargs)
+    client = init(api_key=api_key, **kwargs)
+
+    import inspect
+    import sys
+
+    frame = inspect.currentframe()
+    if frame and frame.f_back:
+        caller_globals = frame.f_back.f_globals
+        module_name = caller_globals.get("__name__")
+        caller_module = sys.modules.get(module_name) if module_name else None
+
+        for name in ("application", "app", "wsgi_app"):
+            if name not in caller_globals:
+                continue
+
+            app = caller_globals[name]
+            if not callable(app) or getattr(app, "_tracium_wrapped", False):
+                continue
+
+            try:
+                import flask
+
+                if isinstance(app, flask.Flask):
+                    continue
+            except ImportError:
+                pass
+
+            if "django" in getattr(type(app), "__module__", "").lower():
+                continue
+
+            try:
+                if len(list(inspect.signature(app).parameters)) < 2:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+            wrapped = wrap_wsgi_app(app)
+            caller_globals[name] = wrapped
+            if caller_module:
+                setattr(caller_module, name, wrapped)
+            break
+
+    return client

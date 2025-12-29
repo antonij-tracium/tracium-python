@@ -43,7 +43,6 @@ def detect_agent_name(default: str = "app") -> str:
                 frame = frame.f_back
                 continue
 
-            # Track the outermost user function as the entry point
             if entry_file is None:
                 entry_file = filename
                 entry_function = (

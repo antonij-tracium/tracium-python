@@ -177,8 +177,26 @@ class TraciumClient:
         )
 
     def close(self) -> None:
-        """Close the client"""
-        self._http._client.close()
+        """Close the client and shutdown background sender."""
+        try:
+            self._http.close()
+        except Exception:
+            pass
+
+    def flush(self, timeout: float | None = None) -> None:
+        """
+        Wait for all pending async requests to be sent.
+
+        Call this before your application exits to ensure all telemetry
+        data has been transmitted.
+
+        Args:
+            timeout: Maximum time to wait in seconds (default: 5.0)
+        """
+        try:
+            self._http.flush()
+        except Exception:
+            pass
 
     def __enter__(self) -> TraciumClient:
         return self

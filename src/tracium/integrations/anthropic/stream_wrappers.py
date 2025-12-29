@@ -1,4 +1,9 @@
-"""Stream wrapper classes for intercepting Anthropic streaming responses."""
+"""
+Stream wrapper classes for intercepting Anthropic streaming responses.
+
+All wrappers are designed to be fail-safe - any tracing errors will
+never break the streaming response for the user.
+"""
 
 from __future__ import annotations
 
@@ -19,8 +24,11 @@ class TextStreamWrapper:
 
     def __next__(self):
         text = next(self._text_stream)
-        if text:
-            self._text_parts.append(text)
+        try:
+            if text:
+                self._text_parts.append(text)
+        except Exception:
+            pass
         return text
 
 
@@ -36,9 +44,47 @@ class AsyncTextStreamWrapper:
 
     async def __anext__(self):
         text = await self._text_stream.__anext__()
-        if text:
-            self._text_parts.append(text)
+        try:
+            if text:
+                self._text_parts.append(text)
+        except Exception:
+            pass
         return text
+
+
+def _finalize_stream(
+    span_handle: Any,
+    span_context: Any,
+    text_parts: list[str],
+    input_tokens: int | None,
+    output_tokens: int | None,
+) -> None:
+    """Finalize stream: record output, tokens, and close span. Never raises."""
+    try:
+        span_handle.record_output("".join(text_parts) if text_parts else "(streaming response)")
+    except Exception:
+        pass
+
+    try:
+        if input_tokens is not None or output_tokens is not None:
+            span_handle.set_token_usage(input_tokens=input_tokens, output_tokens=output_tokens)
+    except Exception:
+        pass
+
+    try:
+        span_context.__exit__(None, None, None)
+    except Exception:
+        pass
+
+    try:
+        from ...instrumentation.auto_trace_tracker import (
+            _get_web_route_info,
+            close_auto_trace_if_needed,
+        )
+
+        close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
+    except Exception:
+        pass
 
 
 class StreamWrapper:
@@ -52,6 +98,7 @@ class StreamWrapper:
         self._input_tokens: int | None = None
         self._output_tokens: int | None = None
         self._text_stream_wrapped = False
+        self._finalized = False
 
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._stream, name)
@@ -66,38 +113,37 @@ class StreamWrapper:
     def __next__(self):
         try:
             chunk = next(self._stream)
-            chunk_type = getattr(chunk, "type", None)
 
-            if chunk_type == "content_block_delta":
-                delta = getattr(chunk, "delta", None)
-                if delta and (text := getattr(delta, "text", None)):
-                    self._text_parts.append(text)
-            elif chunk_type == "content_block_start":
-                content_block = getattr(chunk, "content_block", None)
-                if content_block and (text := getattr(content_block, "text", None)):
-                    self._text_parts.append(text)
+            try:
+                chunk_type = getattr(chunk, "type", None)
 
-            if chunk_type in ("message_stop", "message_delta"):
-                usage = getattr(chunk, "usage", None)
-                if usage:
-                    self._input_tokens, self._output_tokens = extract_usage(usage)
+                if chunk_type == "content_block_delta":
+                    delta = getattr(chunk, "delta", None)
+                    if delta and (text := getattr(delta, "text", None)):
+                        self._text_parts.append(text)
+                elif chunk_type == "content_block_start":
+                    content_block = getattr(chunk, "content_block", None)
+                    if content_block and (text := getattr(content_block, "text", None)):
+                        self._text_parts.append(text)
+
+                if chunk_type in ("message_stop", "message_delta"):
+                    usage = getattr(chunk, "usage", None)
+                    if usage:
+                        self._input_tokens, self._output_tokens = extract_usage(usage)
+            except Exception:
+                pass
 
             return chunk
         except StopIteration:
-            self._span_handle.record_output(
-                "".join(self._text_parts) if self._text_parts else "(streaming response)"
-            )
-            if self._input_tokens is not None or self._output_tokens is not None:
-                self._span_handle.set_token_usage(
-                    input_tokens=self._input_tokens, output_tokens=self._output_tokens
+            if not self._finalized:
+                self._finalized = True
+                _finalize_stream(
+                    self._span_handle,
+                    self._span_context,
+                    self._text_parts,
+                    self._input_tokens,
+                    self._output_tokens,
                 )
-            self._span_context.__exit__(None, None, None)
-            from ...instrumentation.auto_trace_tracker import (
-                _get_web_route_info,
-                close_auto_trace_if_needed,
-            )
-
-            close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
             raise
 
 
@@ -112,6 +158,7 @@ class AsyncStreamWrapper:
         self._input_tokens: int | None = None
         self._output_tokens: int | None = None
         self._text_stream_wrapped = False
+        self._finalized = False
 
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._stream, name)
@@ -126,36 +173,35 @@ class AsyncStreamWrapper:
     async def __anext__(self):
         try:
             chunk = await self._stream.__anext__()
-            chunk_type = getattr(chunk, "type", None)
 
-            if chunk_type == "content_block_delta":
-                delta = getattr(chunk, "delta", None)
-                if delta and (text := getattr(delta, "text", None)):
-                    self._text_parts.append(text)
-            elif chunk_type == "content_block_start":
-                content_block = getattr(chunk, "content_block", None)
-                if content_block and (text := getattr(content_block, "text", None)):
-                    self._text_parts.append(text)
+            try:
+                chunk_type = getattr(chunk, "type", None)
 
-            if chunk_type in ("message_stop", "message_delta"):
-                usage = getattr(chunk, "usage", None)
-                if usage:
-                    self._input_tokens, self._output_tokens = extract_usage(usage)
+                if chunk_type == "content_block_delta":
+                    delta = getattr(chunk, "delta", None)
+                    if delta and (text := getattr(delta, "text", None)):
+                        self._text_parts.append(text)
+                elif chunk_type == "content_block_start":
+                    content_block = getattr(chunk, "content_block", None)
+                    if content_block and (text := getattr(content_block, "text", None)):
+                        self._text_parts.append(text)
+
+                if chunk_type in ("message_stop", "message_delta"):
+                    usage = getattr(chunk, "usage", None)
+                    if usage:
+                        self._input_tokens, self._output_tokens = extract_usage(usage)
+            except Exception:
+                pass
 
             return chunk
         except StopAsyncIteration:
-            self._span_handle.record_output(
-                "".join(self._text_parts) if self._text_parts else "(streaming response)"
-            )
-            if self._input_tokens is not None or self._output_tokens is not None:
-                self._span_handle.set_token_usage(
-                    input_tokens=self._input_tokens, output_tokens=self._output_tokens
+            if not self._finalized:
+                self._finalized = True
+                _finalize_stream(
+                    self._span_handle,
+                    self._span_context,
+                    self._text_parts,
+                    self._input_tokens,
+                    self._output_tokens,
                 )
-            self._span_context.__exit__(None, None, None)
-            from ...instrumentation.auto_trace_tracker import (
-                _get_web_route_info,
-                close_auto_trace_if_needed,
-            )
-
-            close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
             raise

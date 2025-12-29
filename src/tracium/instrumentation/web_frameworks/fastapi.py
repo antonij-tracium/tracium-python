@@ -22,7 +22,6 @@ def get_fastapi_route_info() -> tuple[str, str] | None:
     except ImportError:
         return None
 
-    # Find Request object in call stack
     frame = inspect.currentframe()
     request_obj = None
 
