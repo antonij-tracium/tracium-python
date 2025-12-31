@@ -12,10 +12,10 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from ..context.trace_context import current_trace
 from ..core.client import TraciumClient
-from ..helpers.global_state import STATE, get_default_tags, get_options
+from ..helpers.global_state import STATE
 from ..helpers.logging_config import get_logger
-from ..instrumentation.auto_trace_tracker import get_or_create_auto_trace
 
 logger = get_logger()
 
@@ -30,23 +30,9 @@ def _wrap_executor_method(
         span_handle = None
 
         try:
-            options = get_options()
-
-            trace_handle, created_trace = get_or_create_auto_trace(
-                client=client,
-                agent_name=options.default_agent_name or "langgraph",
-                model_id=options.default_model_id,
-                tags=get_default_tags(["@langgraph"]),
-            )
-
-            if created_trace:
-                trace_handle.set_summary(
-                    {
-                        **options.default_metadata,
-                        "provider": "langgraph",
-                        "entrypoint": method_name,
-                    }
-                )
+            trace_handle = current_trace()
+            if trace_handle is None:
+                return method(self, *args, **kwargs)
 
             span_context = trace_handle.span(
                 span_type="graph",
@@ -97,23 +83,9 @@ def _wrap_executor_method_async(
         span_handle = None
 
         try:
-            options = get_options()
-
-            trace_handle, created_trace = get_or_create_auto_trace(
-                client=client,
-                agent_name=options.default_agent_name or "langgraph",
-                model_id=options.default_model_id,
-                tags=get_default_tags(["@langgraph"]),
-            )
-
-            if created_trace:
-                trace_handle.set_summary(
-                    {
-                        **options.default_metadata,
-                        "provider": "langgraph",
-                        "entrypoint": method_name,
-                    }
-                )
+            trace_handle = current_trace()
+            if trace_handle is None:
+                return await method(self, *args, **kwargs)
 
             span_context = trace_handle.span(
                 span_type="graph",

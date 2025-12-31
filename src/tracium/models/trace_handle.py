@@ -146,6 +146,11 @@ class AgentTraceHandle:
             if self._state.finished:
                 return {"trace_id": self._state.trace_id, "status": "already_finished"}
 
+            if not self._state.remote_started and not self._state.has_spans:
+                self._state.finished = True
+                self._state.status = "skipped"
+                return {"trace_id": self._state.trace_id, "status": "skipped"}
+
             if summary is not None:
                 self.set_summary(summary)
             if tags:
@@ -184,6 +189,12 @@ class AgentTraceHandle:
         try:
             if self._state.finished:
                 return {"trace_id": self._state.trace_id, "status": "already_finished"}
+
+            if not self._state.remote_started and not self._state.has_spans:
+                self._state.finished = True
+                self._state.status = "skipped"
+                self._state.error = str(error)[:10000] if error else "Unknown error"
+                return {"trace_id": self._state.trace_id, "status": "skipped"}
 
             self._state.status = "failed"
             self._state.error = error
@@ -345,6 +356,7 @@ class AgentTraceManager(
         trace_id: str | None,
         workspace_id: str | None = None,
         version: str | None = None,
+        lazy_start: bool = False,
     ) -> None:
         self._client = client
         self._agent_name = agent_name
@@ -353,6 +365,7 @@ class AgentTraceManager(
         self._explicit_trace_id = trace_id
         self._workspace_id = workspace_id
         self._version = version
+        self._lazy_start = bool(lazy_start)
         self._state: TraceState | None = None
         self._token: contextvars.Token[TraceState | None] | None = None
 
@@ -377,6 +390,31 @@ class AgentTraceManager(
             self._explicit_trace_id = validated_trace_id
             self._tags = validated_tags
 
+            if self._lazy_start:
+                trace_id = validated_trace_id or str(uuid.uuid4())
+                state = TraceState(
+                    client=self._client,
+                    trace_id=str(trace_id),
+                    agent_name=validated_agent_name,
+                    tags=list(validated_tags),
+                    start_payload={},
+                    model_id=self._model_id,
+                    workspace_id=self._workspace_id,
+                    version=self._version,
+                    remote_started=False,
+                    has_spans=False,
+                )
+                self._state = state
+
+                try:
+                    from ..context.trace_context import CURRENT_TRACE_STATE
+
+                    self._token = CURRENT_TRACE_STATE.set(state)
+                except Exception:
+                    pass
+
+                return AgentTraceHandle(state)
+
             response: dict[str, Any] | Any = self._client.start_agent_trace(
                 validated_agent_name,
                 model_id=self._model_id,
@@ -386,7 +424,6 @@ class AgentTraceManager(
                 version=self._version,
             )
 
-            trace_id: str | None = None
             if isinstance(response, dict):
                 trace_id = response.get("id") or response.get("trace_id")
             if not trace_id:
@@ -408,6 +445,10 @@ class AgentTraceManager(
                 tags=list(validated_tags),
                 start_payload=response_dict,
                 model_id=trace_model_id,
+                workspace_id=self._workspace_id,
+                version=self._version,
+                remote_started=True,
+                has_spans=False,
             )
             self._state = state
 
@@ -431,6 +472,10 @@ class AgentTraceManager(
                 tags=list(self._tags) if self._tags else [],
                 start_payload={},
                 model_id=self._model_id,
+                workspace_id=self._workspace_id,
+                version=self._version,
+                remote_started=not self._lazy_start,
+                has_spans=False,
             )
             self._state = state
 
@@ -461,6 +506,11 @@ class AgentTraceManager(
             if state is None or state.finished:
                 return
 
+            # Lazy-start traces should not be created/sent at all unless spans were recorded.
+            if self._lazy_start and not state.has_spans and not state.remote_started:
+                state.finished = True
+                return
+
             if exc_type is not None:
                 try:
                     formatted = _format_exception(exc_type, exc_value, exc_tb)
@@ -477,16 +527,18 @@ class AgentTraceManager(
                 pass
 
             if state.status == "failed":
-                self._client.fail_agent_trace(
-                    state.trace_id,
-                    error=state.error,
-                )
+                if state.remote_started:
+                    self._client.fail_agent_trace(
+                        state.trace_id,
+                        error=state.error,
+                    )
             else:
-                self._client.complete_agent_trace(
-                    state.trace_id,
-                    summary=state.summary,
-                    tags=state.tags or None,
-                )
+                if state.remote_started:
+                    self._client.complete_agent_trace(
+                        state.trace_id,
+                        summary=state.summary,
+                        tags=state.tags or None,
+                    )
                 state.status = "completed"
 
             state.finished = True

@@ -226,6 +226,12 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
 
     def __enter__(self) -> AgentSpanHandle:
         try:
+            try:
+                self.state.has_spans = True
+                self.state.ensure_remote_started()
+            except Exception:
+                pass
+
             self.state.push_span(self.span_id)
 
             try:

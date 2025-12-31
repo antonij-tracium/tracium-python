@@ -15,6 +15,7 @@ from .celery import get_celery_task_info, register_celery_response_hook
 from .django import get_django_route_info, register_django_response_hook
 from .fastapi import get_fastapi_route_info, register_fastapi_response_hook
 from .flask import get_flask_route_info, register_flask_response_hook
+from .generic import get_generic_route_info
 from .generic import wrap_wsgi_app as wrap_wsgi_app
 
 
@@ -28,6 +29,7 @@ def get_web_route_info() -> tuple[str, str] | None:
         get_flask_route_info,
         get_fastapi_route_info,
         get_django_route_info,
+        get_generic_route_info,
         get_celery_task_info,
     ]
 
