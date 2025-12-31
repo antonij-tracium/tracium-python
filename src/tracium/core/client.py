@@ -295,6 +295,7 @@ class TraciumClient:
         trace_id: str | None = None,
         workspace_id: str | None = None,
         version: str | None = None,
+        lazy_start: bool = False,
     ) -> AgentTraceManager:
         """
         Context manager that automatically manages the lifecycle of an agent trace.
@@ -316,6 +317,7 @@ class TraciumClient:
             trace_id=trace_id,
             workspace_id=workspace_id,
             version=version,
+            lazy_start=lazy_start,
         )
 
 

@@ -233,12 +233,7 @@ class AutoTraceContext:
     trace_handle: Any
     entry_frame_id: str
     entry_function_name: str
-    llm_call_count: int = 0
     has_failed_span: bool = False
-
-    def increment_call(self) -> None:
-        """Increment the LLM call counter."""
-        self.llm_call_count += 1
 
     def mark_span_failed(self) -> None:
         """Mark that a span in this trace has failed."""
@@ -418,15 +413,12 @@ def get_or_create_auto_trace(
                         _WEB_ROUTE_WHEN_TRACE_CREATED.set(None)
                         _close_trace_safely(auto_context)
                     else:
-                        auto_context.increment_call()
                         return auto_context.trace_handle, False
             else:
-                auto_context.increment_call()
                 return auto_context.trace_handle, False
         else:
             current_frame_id, _ = _find_workflow_entry_point()
             if current_frame_id == auto_context.entry_frame_id:
-                auto_context.increment_call()
                 return auto_context.trace_handle, False
             else:
                 _AUTO_TRACE_CONTEXT.set(None)
@@ -481,6 +473,7 @@ def get_or_create_auto_trace(
         model_id=model_id,
         tags=tags or [],
         version=version,
+        lazy_start=True,
     )
     trace_handle = trace_manager.__enter__()
 
@@ -489,7 +482,6 @@ def get_or_create_auto_trace(
         trace_handle=trace_handle,
         entry_frame_id=entry_frame_id,
         entry_function_name=entry_function_name,
-        llm_call_count=1,
     )
 
     _AUTO_TRACE_CONTEXT.set(auto_context)

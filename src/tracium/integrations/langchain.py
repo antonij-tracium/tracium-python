@@ -78,13 +78,29 @@ if BaseCallbackHandler is not None:
             self._trace_mapping: dict[str, str] = {}
             self._active_spans: dict[str, tuple[Any, Any]] = {}
             self._stream_buffers: dict[str, _StreamBuffer] = {}
+            self._pending_roots: dict[str, dict[str, Any]] = {}
             self._lock = threading.RLock()
+
+        def _build_trace_metadata(
+            self,
+            serialized: dict[str, Any],
+            inputs: dict[str, Any],
+            options: Any | None = None,
+        ) -> dict[str, Any]:
+            """Construct metadata for a root LangChain trace."""
+            options = options or get_options()
+            metadata = {**options.default_metadata}
+            metadata["langchain_serialized"] = self._serialize_input(serialized)
+            metadata["langchain_inputs"] = self._serialize_input(inputs)
+            return metadata
 
         def _create_trace(
             self,
             run_id: str,
             serialized: dict[str, Any],
             inputs: dict[str, Any],
+            *,
+            metadata: dict[str, Any] | None = None,
         ) -> None:
             options = get_options()
 
@@ -115,9 +131,7 @@ if BaseCallbackHandler is not None:
                 agent_name = options.default_agent_name
 
             tags = get_default_tags(["@langchain"])
-            metadata = {**options.default_metadata}
-            metadata["langchain_serialized"] = self._serialize_input(serialized)
-            metadata["langchain_inputs"] = self._serialize_input(inputs)
+            summary_payload = metadata or self._build_trace_metadata(serialized, inputs, options)
 
             handle, created_new = get_or_create_auto_trace(
                 client=self._client,
@@ -125,12 +139,14 @@ if BaseCallbackHandler is not None:
                 model_id=options.default_model_id,
                 tags=tags,
             )
+            if handle is None:
+                return
 
             if created_new:
-                handle.set_summary(metadata)
+                handle.set_summary(summary_payload)
             elif should_reuse:
                 existing_summary = getattr(handle, "_summary", {}) or {}
-                existing_summary.update(metadata)
+                existing_summary.update(summary_payload)
                 handle.set_summary(existing_summary)
 
             tracked = _TrackedTrace(
@@ -142,6 +158,7 @@ if BaseCallbackHandler is not None:
             with self._lock:
                 self._root_traces[run_id] = tracked
                 self._trace_mapping[run_id] = run_id
+                self._pending_roots.pop(run_id, None)
 
         def _close_run(
             self,
@@ -154,6 +171,7 @@ if BaseCallbackHandler is not None:
                 tracked = self._root_traces.pop(run_id, None)
                 self._trace_mapping.pop(run_id, None)
                 self._stream_buffers.pop(run_id, None)
+                self._pending_roots.pop(run_id, None)
 
             if not tracked:
                 return
@@ -284,7 +302,12 @@ if BaseCallbackHandler is not None:
             run_id_str = str(run_id)
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
             if parent_run_id_str is None:
-                self._create_trace(run_id_str, serialized or {}, inputs)
+                with self._lock:
+                    self._pending_roots[run_id_str] = {
+                        "serialized": serialized or {},
+                        "inputs": inputs,
+                    }
+                    self._trace_mapping[run_id_str] = run_id_str
                 return
 
             if not serialized:
@@ -565,12 +588,16 @@ if BaseCallbackHandler is not None:
                 parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
             )
 
-            if not parent_run_id_str:
+            if owner not in self._root_traces:
                 with self._lock:
-                    if owner not in self._root_traces:
-                        self._create_trace(
-                            run_id=owner, serialized=serialized or {}, inputs={"prompts": prompts}
-                        )
+                    pending = self._pending_roots.pop(owner, None)
+                serialized_for_trace = (pending or {}).get("serialized") or serialized or {}
+                inputs_for_trace = (pending or {}).get("inputs") or {"prompts": prompts}
+                self._create_trace(
+                    run_id=owner,
+                    serialized=serialized_for_trace,
+                    inputs=inputs_for_trace,
+                )
 
             model_id = self._extract_model_id(serialized, kwargs)
 
@@ -612,12 +639,16 @@ if BaseCallbackHandler is not None:
             owner = self._trace_mapping.get(
                 parent_run_id_str or run_id_str, parent_run_id_str or run_id_str
             )
-            if not parent_run_id_str:
+            if owner not in self._root_traces:
                 with self._lock:
-                    if owner not in self._root_traces:
-                        self._create_trace(
-                            run_id=owner, serialized=serialized or {}, inputs={"messages": messages}
-                        )
+                    pending = self._pending_roots.pop(owner, None)
+                serialized_for_trace = (pending or {}).get("serialized") or serialized or {}
+                inputs_for_trace = (pending or {}).get("inputs") or {"messages": messages}
+                self._create_trace(
+                    run_id=owner,
+                    serialized=serialized_for_trace,
+                    inputs=inputs_for_trace,
+                )
 
             model_id = self._extract_model_id(serialized, kwargs)
             serialized_messages = self._serialize_input(messages)

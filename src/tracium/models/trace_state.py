@@ -30,6 +30,38 @@ class TraceState:
     span_stack: list[str] = field(default_factory=list)
     start_payload: dict[str, Any] = field(default_factory=dict)
     model_id: str | None = None
+    workspace_id: str | None = None
+    version: str | None = None
+    remote_started: bool = False
+    has_spans: bool = False
+
+    def ensure_remote_started(self) -> None:
+        """
+        Ensure the trace has been started in the backend.
+
+        For lazy-start traces, we defer the `/agents/traces` call until the first span.
+        """
+        if self.remote_started:
+            return
+        try:
+            payload = self.client.start_agent_trace(
+                self.agent_name,
+                model_id=self.model_id,
+                tags=self.tags or None,
+                trace_id=self.trace_id,
+                workspace_id=self.workspace_id,
+                version=self.version,
+            )
+            if isinstance(payload, dict):
+                try:
+                    self.start_payload = dict(payload)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        finally:
+            # Avoid retry loops; worst case spans still attempt to send and fail safely.
+            self.remote_started = True
 
     def push_span(self, span_id: str) -> None:
         self.span_stack.append(span_id)
@@ -74,4 +106,8 @@ class TraceState:
             span_stack=self.span_stack.copy(),
             start_payload=self.start_payload.copy(),
             model_id=self.model_id,
+            workspace_id=self.workspace_id,
+            version=self.version,
+            remote_started=self.remote_started,
+            has_spans=self.has_spans,
         )
