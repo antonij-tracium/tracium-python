@@ -149,6 +149,15 @@ if BaseCallbackHandler is not None:
                 existing_summary.update(summary_payload)
                 handle.set_summary(existing_summary)
 
+            try:
+                if hasattr(handle, "_state"):
+                    handle._state.ensure_remote_started()
+                    handle._state.has_spans = True
+                    if hasattr(self._client, "_api") and hasattr(self._client._api, "_http"):
+                        self._client._api._http.flush()
+            except Exception:
+                pass
+
             tracked = _TrackedTrace(
                 manager=None,
                 handle=handle,
@@ -178,28 +187,54 @@ if BaseCallbackHandler is not None:
 
             handle = tracked.handle
             if outputs:
-                handle.set_summary({"langchain_outputs": self._serialize_input(outputs)})
-            if error:
-                handle.mark_failed(str(error))
-                from ..instrumentation.auto_trace_tracker import get_current_auto_trace_context
+                try:
+                    handle.set_summary({"langchain_outputs": self._serialize_input(outputs)})
+                except Exception:
+                    pass
 
-                auto_context = get_current_auto_trace_context()
-                if auto_context:
-                    auto_context.mark_span_failed()
             if tracked.owned and tracked.manager is not None:
+                if error:
+                    handle.mark_failed(str(error))
                 tracked.manager.__exit__(
                     type(error) if error else None,
                     error,
                     error.__traceback__ if error else None,
                 )
             else:
-                from ..instrumentation.auto_trace_tracker import (
-                    _get_web_route_info,
-                    close_auto_trace_if_needed,
-                )
+                try:
+                    if hasattr(handle, "_state"):
+                        state = handle._state
 
-                is_web_context = _get_web_route_info() is not None
-                close_auto_trace_if_needed(force_close=is_web_context, error=error)
+                        if not state.remote_started:
+                            try:
+                                state.ensure_remote_started()
+                            except Exception:
+                                state.remote_started = True
+
+                        if not state.finished:
+                            try:
+                                if error:
+                                    state.client.fail_agent_trace(state.trace_id, error=str(error))
+                                    state.status = "failed"
+                                    state.error = str(error)
+                                else:
+                                    state.client.complete_agent_trace(
+                                        state.trace_id,
+                                        summary=state.summary,
+                                        tags=state.tags or None,
+                                    )
+                                    state.status = "completed"
+
+                                if hasattr(state.client, "_api") and hasattr(
+                                    state.client._api, "_http"
+                                ):
+                                    state.client._api._http.flush()
+                            except Exception:
+                                pass
+                            finally:
+                                state.finished = True
+                except Exception:
+                    pass
 
         def _extract_model_id(
             self, serialized: dict[str, Any], kwargs: dict[str, Any]
@@ -302,12 +337,11 @@ if BaseCallbackHandler is not None:
             run_id_str = str(run_id)
             parent_run_id_str = str(parent_run_id) if parent_run_id is not None else None
             if parent_run_id_str is None:
-                with self._lock:
-                    self._pending_roots[run_id_str] = {
-                        "serialized": serialized or {},
-                        "inputs": inputs,
-                    }
-                    self._trace_mapping[run_id_str] = run_id_str
+                self._create_trace(
+                    run_id=run_id_str,
+                    serialized=serialized or {},
+                    inputs=inputs,
+                )
                 return
 
             if not serialized:
@@ -317,12 +351,31 @@ if BaseCallbackHandler is not None:
             self._trace_mapping[run_id_str] = owner
 
             node_id = serialized.get("id", "")
-            if isinstance(node_id, str) and node_id.startswith("langchain.chat_models"):
-                return
+            if isinstance(node_id, str):
+                if node_id.startswith("langchain.chat_models"):
+                    return
+                if "prompt" in node_id.lower() and any(
+                    x in node_id.lower() for x in ["template", "formatter", "message"]
+                ):
+                    return
+                if "parser" in node_id.lower():
+                    return
 
             chain_name = serialized.get("name") or serialized.get("id", ["unknown"])
             if isinstance(chain_name, list):
                 chain_name = chain_name[-1] if chain_name else "unknown"
+
+            name_lower = str(chain_name).lower()
+            if any(
+                skip in name_lower
+                for skip in [
+                    "prompttemplate",
+                    "chatprompttemplate",
+                    "messageprompttemplate",
+                    "outputparser",
+                ]
+            ):
+                return
 
             self._start_span(
                 lc_run_id=run_id_str,
