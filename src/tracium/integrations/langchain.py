@@ -225,7 +225,9 @@ if BaseCallbackHandler is not None:
                                     )
                                     state.status = "completed"
 
-                                if hasattr(state.client, "_api") and hasattr(state.client._api, "_http"):
+                                if hasattr(state.client, "_api") and hasattr(
+                                    state.client._api, "_http"
+                                ):
                                     state.client._api._http.flush()
                             except Exception:
                                 pass
@@ -352,7 +354,9 @@ if BaseCallbackHandler is not None:
             if isinstance(node_id, str):
                 if node_id.startswith("langchain.chat_models"):
                     return
-                if "prompt" in node_id.lower() and any(x in node_id.lower() for x in ["template", "formatter", "message"]):
+                if "prompt" in node_id.lower() and any(
+                    x in node_id.lower() for x in ["template", "formatter", "message"]
+                ):
                     return
                 if "parser" in node_id.lower():
                     return
@@ -362,7 +366,15 @@ if BaseCallbackHandler is not None:
                 chain_name = chain_name[-1] if chain_name else "unknown"
 
             name_lower = str(chain_name).lower()
-            if any(skip in name_lower for skip in ["prompttemplate", "chatprompttemplate", "messageprompttemplate", "outputparser"]):
+            if any(
+                skip in name_lower
+                for skip in [
+                    "prompttemplate",
+                    "chatprompttemplate",
+                    "messageprompttemplate",
+                    "outputparser",
+                ]
+            ):
                 return
 
             self._start_span(
