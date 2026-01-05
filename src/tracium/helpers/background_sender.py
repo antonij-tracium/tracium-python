@@ -8,7 +8,6 @@ asynchronously in a background thread.
 
 from __future__ import annotations
 
-import atexit
 import queue
 import threading
 import time
@@ -72,8 +71,6 @@ class BackgroundSender:
 
         self._start_worker()
 
-        atexit.register(self._cleanup)
-
     def _start_worker(self) -> None:
         """Start the background worker thread."""
         with self._lock:
@@ -89,11 +86,13 @@ class BackgroundSender:
 
     def _worker_loop(self) -> None:
         """Main worker loop that processes queued requests."""
-        while not self._shutdown.is_set():
+        while True:
             try:
                 try:
                     request = self._queue.get(timeout=0.1)
                 except queue.Empty:
+                    if self._shutdown.is_set():
+                        break
                     continue
 
                 if request is None:
@@ -244,7 +243,7 @@ class BackgroundSender:
             self._shutdown.set()
 
             try:
-                self._queue.put_nowait(None)
+                self._queue.put(None, timeout=0.5)
             except Exception:
                 pass
 

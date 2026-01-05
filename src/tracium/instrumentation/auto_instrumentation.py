@@ -25,6 +25,10 @@ def configure_auto_instrumentation(client: TraciumClient) -> None:
 
     options = get_options()
 
+    from .auto_trace_tracker import register_cleanup
+
+    register_cleanup()
+
     if options.auto_instrument_langchain:
         register_langchain_handler(client)
     if options.auto_instrument_llm_clients:
