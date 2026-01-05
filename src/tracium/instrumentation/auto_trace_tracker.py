@@ -13,7 +13,6 @@ import atexit
 import contextvars
 import inspect
 import threading
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -112,6 +111,13 @@ def _cleanup_handler() -> None:
         _close_trace_safely(auto_context)
         _AUTO_TRACE_CONTEXT.set(None)
 
+    try:
+        from ..helpers.global_state import STATE
+        if STATE.client:
+            STATE.client.flush()
+    except Exception:
+        pass
+
 
 def _close_trace_on_exception(exc_type, exc_value, exc_traceback) -> None:
     """Close any open auto-traces and mark them as failed."""
@@ -201,7 +207,7 @@ def _register_asyncio_handler() -> None:
         loop.set_exception_handler(_asyncio_exception_handler)
 
 
-def _register_cleanup() -> None:
+def register_cleanup() -> None:
     """Register the cleanup handler if not already registered."""
     global _CLEANUP_REGISTERED, _ORIGINAL_EXCEPTHOOK
 
@@ -347,7 +353,7 @@ def _find_workflow_entry_point() -> tuple[str, str]:
 
     user_frames = _get_user_frames()
     if not user_frames:
-        return str(uuid.uuid4()), "workflow"
+        return "atexit:workflow", "workflow"
 
     endpoint_info = _find_endpoint_handler(user_frames)
     if endpoint_info is not None:
@@ -466,7 +472,7 @@ def get_or_create_auto_trace(
         except RuntimeError:
             version = None
 
-    _register_cleanup()
+    register_cleanup()
 
     trace_manager = client.agent_trace(
         agent_name=agent_name,
@@ -510,6 +516,9 @@ def should_close_auto_trace(force_close: bool = False) -> bool:
     auto_context = _AUTO_TRACE_CONTEXT.get()
     if auto_context is None:
         return False
+
+    if hasattr(auto_context.trace_handle, "_state") and auto_context.trace_handle._state.finished:
+        return True
 
     current_web_route = _get_web_route_info()
     is_in_web_context = current_web_route is not None

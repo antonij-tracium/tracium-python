@@ -4,6 +4,7 @@ Main Tracium client class.
 
 from __future__ import annotations
 
+import atexit
 import os
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -157,6 +158,8 @@ class TraciumClient:
         self._http = HTTPClient(httpx_client, self._config)
         self._api = TraciumAPIEndpoints(self._http)
 
+        atexit.register(self.close)
+
         self._user_plan: str | None = None
         self._plan_fetched: bool = False
 
@@ -179,6 +182,7 @@ class TraciumClient:
     def close(self) -> None:
         """Close the client and shutdown background sender."""
         try:
+            self.flush()  # Ensure all pending telemetry is sent
             self._http.close()
         except Exception:
             pass

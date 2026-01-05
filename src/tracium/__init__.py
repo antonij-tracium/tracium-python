@@ -146,6 +146,10 @@ def init(
         auto_instrument_llm_clients=auto_instrument_llm_clients,
     )
     set_client(client, options=options)
+
+    from .instrumentation.auto_trace_tracker import register_cleanup
+    register_cleanup()
+
     enable_automatic_context_propagation()
     configure_auto_instrumentation(client)
     return client
