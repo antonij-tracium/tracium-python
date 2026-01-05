@@ -148,6 +148,7 @@ def init(
     set_client(client, options=options)
 
     from .instrumentation.auto_trace_tracker import register_cleanup
+
     register_cleanup()
 
     enable_automatic_context_propagation()

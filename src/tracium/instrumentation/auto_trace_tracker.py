@@ -113,6 +113,7 @@ def _cleanup_handler() -> None:
 
     try:
         from ..helpers.global_state import STATE
+
         if STATE.client:
             STATE.client.flush()
     except Exception:
