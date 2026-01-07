@@ -76,6 +76,15 @@ class TestTraciumClientInit:
         with TraciumClient.init(api_key=test_api_key, transport=mock_transport) as client:
             assert isinstance(client, TraciumClient)
 
+    def test_init_with_base_url_env_var(
+        self, monkeypatch: pytest.MonkeyPatch, test_api_key: str, mock_transport: httpx.MockTransport
+    ):
+        """Test initializing client with TRACIUM_BASE_URL environment variable."""
+        monkeypatch.setenv("TRACIUM_BASE_URL", "http://env.example.com")
+        client = TraciumClient.init(api_key=test_api_key, transport=mock_transport)
+        assert client._config.base_url == "http://env.example.com"
+        client.close()
+
 
 class TestTraciumClientMethods:
     """Tests for TraciumClient methods."""

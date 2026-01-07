@@ -123,6 +123,10 @@ def init(
     if not api_key:
         raise ValueError("Tracium API key is required. Pass api_key or set TRACIUM_API_KEY.")
 
+    # Check for base_url from environment if not provided
+    if base_url is None and config is None:
+        base_url = os.getenv("TRACIUM_BASE_URL")
+
     if config is not None and base_url is not None:
         raise ValueError("Provide either config or base_url, not both.")
 
