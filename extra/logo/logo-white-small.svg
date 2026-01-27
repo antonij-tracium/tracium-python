@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="48 40 108 100"
+     preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <style>
+      .st0 { fill:#fff; }
+      .st1 { fill:#80caad; }
+    </style>
+  </defs>
+
+  <polygon class="st0" points="114.6 130.7 82.2 130.7 82.2 112.3 114.6 80.5 114.6 80.5 114.6 130.7"/>
+  <polygon class="st1" points="57.6 48.1 57.6 80.5 114.6 80.5 146.4 48.1 146.4 48.1 57.6 48.1"/>
+</svg>
