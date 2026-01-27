@@ -50,6 +50,7 @@ __all__ = [
     "init",
     "trace",
     "get_client",
+    "get_queue_stats",
     "start_trace",
     "agent_trace",
     "current_trace",
@@ -163,6 +164,28 @@ def init(
 def get_client() -> TraciumClient:
     """Return the globally initialized Tracium client."""
     return _get_client()
+
+
+def get_queue_stats() -> dict[str, Any]:
+    """
+    Get statistics about the background sender queue from the global client.
+
+    This is a convenience function that calls get_queue_stats() on the
+    globally initialized client.
+
+    Returns:
+        Dictionary with queue health metrics and event counts
+
+    Example:
+        >>> import tracium
+        >>> tracium.init(api_key="...")
+        >>> stats = tracium.get_queue_stats()
+        >>> print(f"Queue is {stats['capacity_percent']:.1f}% full")
+        >>> if stats['total_dropped'] > 0:
+        ...     print(f"Warning: {stats['total_dropped']} events were dropped!")
+    """
+    client = _get_client()
+    return client.get_queue_stats()
 
 
 def start_trace(

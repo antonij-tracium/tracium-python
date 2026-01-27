@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.0.0] - 2026-01-27
+
+### Added
+
+- **Event Loss Prevention**: Comprehensive improvements to prevent telemetry data loss
+  - Added `block_on_full_queue` configuration option to wait for queue space instead of dropping events
+  - Added `max_queue_size` configuration (default: 10,000) to customize queue capacity
+  - Added `queue_warning_threshold` configuration (default: 0.8) to warn when queue approaches capacity
+  - Added `queue_timeout` configuration (default: 5.0s) for maximum blocking time
+  - Added `get_queue_stats()` API to monitor queue health and event counts
+  - Added comprehensive statistics tracking (enqueued, sent, failed, dropped events)
+  - Improved warning messages with actionable guidance when events are at risk
+  - Added health indicators and success/drop rate metrics
+
+### Changed
+
+- **Background Sender**: Enhanced error handling and statistics tracking
+  - Now tracks total enqueued, sent, failed, and dropped events
+  - Warns when queue reaches configurable capacity threshold (default: 80%)
+  - Rate-limits warnings to once per minute to avoid log spam
+  - Changed dropped event log level from DEBUG to ERROR for better visibility
+  - Failed request log level changed from DEBUG to WARNING with failure count
+
+### Example Configuration
+
+```python
+import tracium
+
+# Prevent event loss with blocking mode
+client = tracium.init(
+    api_key="...",
+    config=tracium.TraciumClientConfig(
+        max_queue_size=20000,          # Increase capacity
+        block_on_full_queue=True,      # Wait instead of dropping
+        queue_warning_threshold=0.9,   # Warn at 90% capacity
+        queue_timeout=10.0             # Wait up to 10s
+    )
+)
+
+# Monitor queue health
+stats = tracium.get_queue_stats()
+print(f"Queue: {stats['capacity_percent']:.1f}% full")
+print(f"Dropped: {stats['total_dropped']} events")
+print(f"Success rate: {stats['success_rate']:.1%}")
+```
+
 ## [0.2.0] - 2025-12-25
 
 ### Added
