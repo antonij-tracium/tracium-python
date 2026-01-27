@@ -289,6 +289,46 @@ class TraciumClient:
 
         return {"plan": self._user_plan or "free"}
 
+    def get_queue_stats(self) -> dict[str, Any]:
+        """
+        Get statistics about the background sender queue.
+
+        Useful for monitoring queue health and detecting potential event loss.
+
+        Returns:
+            Dictionary containing:
+            - queue_size: Current number of events in queue
+            - max_queue_size: Maximum queue capacity
+            - capacity_percent: Queue fullness as percentage
+            - is_healthy: Boolean indicating if queue is in good state
+            - total_enqueued: Total events added to queue
+            - total_sent: Total events successfully sent
+            - total_failed: Total events that failed to send
+            - total_dropped: Total events dropped due to full queue
+            - success_rate: Percentage of events successfully sent
+            - drop_rate: Percentage of events dropped
+            - blocking_enabled: Whether blocking mode is enabled
+
+        Example:
+            >>> client = TraciumClient(api_key="...")
+            >>> stats = client.get_queue_stats()
+            >>> if stats['total_dropped'] > 0:
+            ...     print(f"Warning: {stats['total_dropped']} events dropped!")
+            >>> if stats['capacity_percent'] > 80:
+            ...     print("Queue is nearly full, consider increasing max_queue_size")
+        """
+        try:
+            from ..helpers.background_sender import get_background_sender
+
+            sender = get_background_sender(self._http._client, self._config)
+            return sender.get_stats()
+        except Exception as e:
+            logger.debug(f"Failed to get queue stats: {e}")
+            return {
+                "error": str(e),
+                "is_healthy": False,
+            }
+
     def agent_trace(
         self,
         *,

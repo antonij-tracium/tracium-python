@@ -1,4 +1,4 @@
-name: Publish to TestPyPI
+name: Publish to PyPI
 
 on:
   release:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   build-and-publish:
-    name: Build and publish to TestPyPI
+    name: Build and publish to PyPI
     runs-on: ubuntu-latest
 
     permissions:
@@ -14,8 +14,8 @@ jobs:
       contents: read
 
     environment:
-      name: testpypi
-      url: https://test.pypi.org/p/tracium
+      name: pypi
+      url: https://pypi.org/p/tracium
 
     steps:
       - name: Checkout repository
@@ -51,8 +51,7 @@ jobs:
       - name: Build package
         run: python -m build
 
-      - name: Publish to TestPyPI
+      - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          repository-url: https://test.pypi.org/legacy/
           attestations: true

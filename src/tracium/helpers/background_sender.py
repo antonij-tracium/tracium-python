@@ -62,12 +62,20 @@ class BackgroundSender:
     ) -> None:
         self._client = httpx_client
         self._config = config
-        self._queue: queue.Queue[QueuedRequest | None] = queue.Queue(maxsize=max_queue_size)
+        queue_size = getattr(config, "max_queue_size", max_queue_size)
+        self._max_queue_size = queue_size
+        self._queue: queue.Queue[QueuedRequest | None] = queue.Queue(maxsize=queue_size)
         self._shutdown = threading.Event()
         self._flush_timeout = flush_timeout
         self._worker_thread: threading.Thread | None = None
         self._started = False
         self._lock = threading.Lock()
+
+        self._total_enqueued = 0
+        self._total_dropped = 0
+        self._total_sent = 0
+        self._total_failed = 0
+        self._last_warning_time = 0.0
 
         self._start_worker()
 
@@ -137,6 +145,7 @@ class BackgroundSender:
                         except Exception:
                             pass
 
+                    self._total_sent += 1
                     logger.debug(
                         f"Background request successful: {request.method.value} {request.path}"
                     )
@@ -160,9 +169,11 @@ class BackgroundSender:
                     time.sleep(delay)
 
             if last_exception:
-                logger.debug(
+                self._total_failed += 1
+                logger.warning(
                     f"Background request failed after retries: {request.method.value} {request.path} - "
-                    f"{type(last_exception).__name__}: {last_exception}"
+                    f"{type(last_exception).__name__}: {last_exception}. "
+                    f"Total failures: {self._total_failed}"
                 )
 
         except Exception as e:
@@ -204,8 +215,11 @@ class BackgroundSender:
         """
         Enqueue a request for background processing.
 
-        Returns True if successfully queued, False if queue is full.
+        Returns True if successfully queued, False if queue is full and blocking is disabled.
         Never raises exceptions.
+
+        If block_on_full_queue is enabled, this will wait up to queue_timeout seconds
+        for space in the queue, preventing event loss.
         """
         try:
             request = QueuedRequest(
@@ -216,10 +230,59 @@ class BackgroundSender:
                 headers=headers,
                 callback=callback,
             )
-            self._queue.put_nowait(request)
-            return True
+
+            # Check queue capacity and warn if needed
+            current_size = self._queue.qsize()
+            threshold = getattr(self._config, "queue_warning_threshold", 0.8)
+            capacity_ratio = current_size / self._max_queue_size
+
+            if capacity_ratio >= threshold:
+                current_time = time.time()
+                # Warn at most once per minute to avoid log spam
+                if current_time - self._last_warning_time > 60:
+                    logger.warning(
+                        f"Tracium queue at {capacity_ratio:.0%} capacity "
+                        f"({current_size}/{self._max_queue_size}). "
+                        f"Stats: {self._total_enqueued} enqueued, {self._total_dropped} dropped, "
+                        f"{self._total_sent} sent, {self._total_failed} failed. "
+                        f"Consider increasing max_queue_size in TraciumClientConfig."
+                    )
+                    self._last_warning_time = current_time
+
+            # Try to enqueue based on blocking configuration
+            block_on_full = getattr(self._config, "block_on_full_queue", False)
+            timeout = getattr(self._config, "queue_timeout", 5.0) if block_on_full else None
+
+            if block_on_full and timeout:
+                # Blocking mode - wait for space in queue
+                try:
+                    self._queue.put(request, timeout=timeout)
+                    self._total_enqueued += 1
+                    return True
+                except queue.Full:
+                    # Even with blocking, we timed out
+                    self._total_dropped += 1
+                    logger.error(
+                        f"Tracium queue full after waiting {timeout}s. "
+                        f"Dropping event to {path}. Total dropped: {self._total_dropped}. "
+                        "Your application is generating events faster than they can be sent. "
+                        "Consider: (1) Increasing max_queue_size, (2) Reducing event volume, "
+                        "or (3) Increasing queue_timeout."
+                    )
+                    return False
+            else:
+                self._queue.put_nowait(request)
+                self._total_enqueued += 1
+                return True
+
         except queue.Full:
-            logger.debug(f"Background sender queue full, dropping request to {path}")
+            self._total_dropped += 1
+            logger.error(
+                f"Tracium queue full ({self._max_queue_size}). Dropping event to {path}. "
+                f"Total dropped: {self._total_dropped}. "
+                "To prevent event loss, enable block_on_full_queue=True in TraciumClientConfig "
+                "or increase max_queue_size."
+            )
             return False
         except Exception as e:
             logger.debug(f"Failed to enqueue request: {type(e).__name__}: {e}")
@@ -256,6 +319,47 @@ class BackgroundSender:
     def shutdown(self) -> None:
         """Explicitly shutdown the background sender."""
         self._cleanup()
+
+    def get_stats(self) -> dict[str, Any]:
+        """
+        Get comprehensive statistics about the background sender.
+        Returns:
+            Dictionary with queue metrics, event counts, and health indicators
+        Example:
+            >>> stats = sender.get_stats()
+            >>> print(f"Queue at {stats['capacity_percent']:.1f}% capacity")
+            >>> print(f"Dropped {stats['total_dropped']} events")
+        """
+        try:
+            current_size = self._queue.qsize()
+            capacity = current_size / self._max_queue_size if self._max_queue_size > 0 else 0
+
+            return {
+                "queue_size": current_size,
+                "max_queue_size": self._max_queue_size,
+                "capacity_percent": capacity * 100,
+                "is_healthy": capacity < 0.9 and self._total_dropped == 0,
+                "total_enqueued": self._total_enqueued,
+                "total_sent": self._total_sent,
+                "total_failed": self._total_failed,
+                "total_dropped": self._total_dropped,
+                "success_rate": (
+                    self._total_sent / self._total_enqueued if self._total_enqueued > 0 else 1.0
+                ),
+                "drop_rate": (
+                    self._total_dropped / self._total_enqueued if self._total_enqueued > 0 else 0.0
+                ),
+                # Configuration
+                "blocking_enabled": getattr(self._config, "block_on_full_queue", False),
+                "queue_timeout": getattr(self._config, "queue_timeout", 5.0),
+            }
+        except Exception as e:
+            logger.debug(f"Failed to get stats: {e}")
+            return {
+                "error": str(e),
+                "max_queue_size": self._max_queue_size,
+                "total_dropped": self._total_dropped,
+            }
 
 
 _background_sender: BackgroundSender | None = None

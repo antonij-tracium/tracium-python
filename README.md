@@ -338,6 +338,96 @@ This will show:
 - Instrumentation activity
 - Context propagation
 
+## Event Loss Prevention & Queue Management
+
+The SDK uses a background queue to send telemetry data without blocking your application. To prevent event loss under high load:
+
+### Configuration Options
+
+```python
+import tracium
+
+client = tracium.init(
+    api_key="sk_live_...",
+    config=tracium.TraciumClientConfig(
+        # Queue size configuration
+        max_queue_size=20000,          # Default: 10000
+        
+        # Event loss prevention
+        block_on_full_queue=True,      # Default: False - wait instead of dropping
+        queue_timeout=10.0,            # Default: 5.0 - max time to wait when blocking
+        
+        # Monitoring
+        queue_warning_threshold=0.9,   # Default: 0.8 - warn at 90% capacity
+    )
+)
+```
+
+### Monitoring Queue Health
+
+```python
+import tracium
+
+# Get queue statistics
+stats = tracium.get_queue_stats()
+
+print(f"Queue size: {stats['queue_size']}/{stats['max_queue_size']}")
+print(f"Capacity: {stats['capacity_percent']:.1f}%")
+print(f"Healthy: {stats['is_healthy']}")
+print(f"Total enqueued: {stats['total_enqueued']}")
+print(f"Total sent: {stats['total_sent']}")
+print(f"Total dropped: {stats['total_dropped']}")
+print(f"Success rate: {stats['success_rate']:.1%}")
+print(f"Drop rate: {stats['drop_rate']:.1%}")
+```
+
+### Best Practices
+
+1. **For High-Volume Applications**: Increase `max_queue_size` based on your event rate
+   ```python
+   # If generating 1000 events/second, consider:
+   config=TraciumClientConfig(max_queue_size=50000)
+   ```
+
+2. **To Prevent ANY Event Loss**: Enable blocking mode
+   ```python
+   config=TraciumClientConfig(
+       block_on_full_queue=True,
+       queue_timeout=30.0  # Adjust based on tolerance
+   )
+   ```
+   **Warning**: This may slow down your application if the queue fills up
+
+3. **Monitor in Production**: Check queue stats periodically
+   ```python
+   stats = tracium.get_queue_stats()
+   if stats['total_dropped'] > 0:
+       logger.warning(f"Dropped {stats['total_dropped']} telemetry events!")
+   if stats['capacity_percent'] > 80:
+       logger.warning("Queue approaching capacity!")
+   ```
+
+4. **Alert on Event Loss**: Integrate with your monitoring system
+   ```python
+   stats = tracium.get_queue_stats()
+   your_metrics.gauge('tracium.queue.capacity', stats['capacity_percent'])
+   your_metrics.counter('tracium.events.dropped', stats['total_dropped'])
+   ```
+
+### What Happens When Queue is Full?
+
+**Default Behavior (`block_on_full_queue=False`)**:
+- New events are **dropped** immediately
+- WARNING log message is emitted with drop count
+- Your application continues without delay
+- Use when: Application performance is more important than complete telemetry
+
+**Blocking Mode (`block_on_full_queue=True`)**:
+- New events **wait** for up to `queue_timeout` seconds
+- If timeout expires, event is dropped with ERROR log
+- Your application may slow down during high load
+- Use when: Complete telemetry is critical and some latency is acceptable
+
 ## Dependencies
 
 ### Core Dependencies
