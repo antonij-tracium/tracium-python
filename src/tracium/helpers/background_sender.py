@@ -62,7 +62,7 @@ class BackgroundSender:
     ) -> None:
         self._client = httpx_client
         self._config = config
-        queue_size = getattr(config, 'max_queue_size', max_queue_size)
+        queue_size = getattr(config, "max_queue_size", max_queue_size)
         self._max_queue_size = queue_size
         self._queue: queue.Queue[QueuedRequest | None] = queue.Queue(maxsize=queue_size)
         self._shutdown = threading.Event()
@@ -233,7 +233,7 @@ class BackgroundSender:
 
             # Check queue capacity and warn if needed
             current_size = self._queue.qsize()
-            threshold = getattr(self._config, 'queue_warning_threshold', 0.8)
+            threshold = getattr(self._config, "queue_warning_threshold", 0.8)
             capacity_ratio = current_size / self._max_queue_size
 
             if capacity_ratio >= threshold:
@@ -250,8 +250,8 @@ class BackgroundSender:
                     self._last_warning_time = current_time
 
             # Try to enqueue based on blocking configuration
-            block_on_full = getattr(self._config, 'block_on_full_queue', False)
-            timeout = getattr(self._config, 'queue_timeout', 5.0) if block_on_full else None
+            block_on_full = getattr(self._config, "block_on_full_queue", False)
+            timeout = getattr(self._config, "queue_timeout", 5.0) if block_on_full else None
 
             if block_on_full and timeout:
                 # Blocking mode - wait for space in queue
@@ -339,24 +339,19 @@ class BackgroundSender:
                 "max_queue_size": self._max_queue_size,
                 "capacity_percent": capacity * 100,
                 "is_healthy": capacity < 0.9 and self._total_dropped == 0,
-
                 "total_enqueued": self._total_enqueued,
                 "total_sent": self._total_sent,
                 "total_failed": self._total_failed,
                 "total_dropped": self._total_dropped,
-
                 "success_rate": (
-                    self._total_sent / self._total_enqueued
-                    if self._total_enqueued > 0 else 1.0
+                    self._total_sent / self._total_enqueued if self._total_enqueued > 0 else 1.0
                 ),
                 "drop_rate": (
-                    self._total_dropped / self._total_enqueued
-                    if self._total_enqueued > 0 else 0.0
+                    self._total_dropped / self._total_enqueued if self._total_enqueued > 0 else 0.0
                 ),
-
                 # Configuration
-                "blocking_enabled": getattr(self._config, 'block_on_full_queue', False),
-                "queue_timeout": getattr(self._config, 'queue_timeout', 5.0),
+                "blocking_enabled": getattr(self._config, "block_on_full_queue", False),
+                "queue_timeout": getattr(self._config, "queue_timeout", 5.0),
             }
         except Exception as e:
             logger.debug(f"Failed to get stats: {e}")

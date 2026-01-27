@@ -319,6 +319,7 @@ class TraciumClient:
         """
         try:
             from ..helpers.background_sender import get_background_sender
+
             sender = get_background_sender(self._http._client, self._config)
             return sender.get_stats()
         except Exception as e:

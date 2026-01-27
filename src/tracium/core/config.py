@@ -28,6 +28,7 @@ class TraciumClientConfig:
         queue_warning_threshold: Warn when queue reaches this % of capacity (0.0-1.0)
         queue_timeout: Maximum time to wait when blocking on full queue (seconds)
     """
+
     base_url: str = "https://api.tracium.ai"
     timeout: float = 10.0
     user_agent: str = f"TraciumSDK/{__version__}"
