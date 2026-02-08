@@ -6,9 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "tracium"
 version = "1.0.2"
 description = "Official Python SDK for the Tracium telemetry and evaluation API. Automatic tracing for OpenAI, Anthropic, Google Gemini, LangChain, and LangGraph."
-readme = "README.md"
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
-license = "MIT"
+license = { text = "MIT" }
 license-files = ["LICEN[CS]E*"]
 authors = [
     { name = "Tracium", email = "support@tracium.ai" },
