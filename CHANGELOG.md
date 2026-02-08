@@ -12,6 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Workspace scoping**: `workspace_id` on `tracium.trace()` and `tracium.init()` to set the workspace for all traces and spans created by that instance. Optional `default_workspace_id` in config (or `TRACIUM_WORKSPACE_ID` env var) applies when not passed per call.
+## [1.0.1] - 2026-01-27
+
+### Changed
+
+- **Optional Dependencies**: All LLM providers and web frameworks are now optional dependencies
+  - Base installation (`pip install tracium`) now only includes core dependencies (httpx, python-dotenv, typing-extensions)
+  - Users can install specific integrations as needed:
+    - LLM providers: `pip install tracium[openai]`, `tracium[anthropic]`, `tracium[google]`, `tracium[langchain]`, `tracium[langgraph]`
+    - Web frameworks: `pip install tracium[flask]`, `tracium[django]`, `tracium[fastapi]`, `tracium[celery]`
+    - Mix and match: `pip install tracium[openai,flask]`
+    - All integrations: `pip install tracium[all]`
+  - Tracium automatically detects which packages are installed and instruments them accordingly
+  - No changes required to existing code - if you already have the packages installed, everything works the same
+  - Significantly reduces installation size and dependency conflicts for users who only need specific integrations
 
 ## [1.0.0] - 2026-01-27
 

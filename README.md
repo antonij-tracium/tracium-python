@@ -1,12 +1,21 @@
-# Tracium Python SDK - Developer Guide
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="extra/logo/logo-white-small.svg">
+    <source media="(prefers-color-scheme: light)" srcset="extra/logo/logo-white-small.svg">
+    <img src="extra/logo/logo-white-small.svg" alt="Tracium Logo" width="120" style="background-color: #1a1a1a; padding: 20px; border-radius: 10px;">
+  </picture>
+  
+  <h1>Tracium Python SDK - Developer Guide</h1>
+  <p>Official Python SDK for Tracium telemetry and evaluation API</p>
 
-[![License](https://img.shields.io/pypi/l/tracium-sdk)](https://pypi.org/project/tracium-sdk/)
-[![Test](https://github.com/AntonijSimonovski/tracium-python/actions/workflows/test.yml/badge.svg)](https://github.com/AntonijSimonovski/tracium-python/actions/workflows/test.yml)
-[![PyPI version](https://img.shields.io/pypi/v/tracium-sdk)](https://pypi.org/project/tracium-sdk/)
+[![License](https://img.shields.io/pypi/l/tracium)](https://github.com/AntonijSimonovski/tracium-python/blob/main/tracium/LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/tracium)](https://pypi.org/project/tracium/)
+
+</div>
 
 This is the development guide for the Tracium Python SDK. For user documentation, see [https://docs.tracium.ai](https://docs.tracium.ai).
 
-**Version:** 0.2.0
+**Version:** 1.0.1
 
 ## Project Overview
 
@@ -500,8 +509,8 @@ Run `mypy tracium/` to see specific type errors. Some may require type annotatio
 - **Repository**: https://github.com/AntonijSimonovski/tracium-python
 - **Issue Tracker**: https://github.com/AntonijSimonovski/tracium-python/issues
 - **User Documentation**: https://docs.tracium.ai
-- **PyPI Package**: https://pypi.org/project/tracium-sdk/
+- **PyPI Package**: https://pypi.org/project/tracium/
 
 ## License
 
-MIT © Tracium
+[MIT License](https://github.com/AntonijSimonovski/tracium-python/blob/main/tracium/LICENSE) © Tracium
