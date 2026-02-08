@@ -17,6 +17,7 @@ from typing_extensions import ParamSpec
 
 from ..context.trace_context import current_trace
 from ..core import TraciumClient
+from ..helpers.global_state import get_options
 from ..helpers.logging_config import get_logger
 from ..models.span_handle import AgentSpanHandle
 
@@ -78,6 +79,7 @@ def agent_trace(
     client: TraciumClient,
     agent_name: str,
     model_id: str | None = None,
+    workspace_id: str | None = None,
     metadata: Mapping[str, Any] | None = None,
     tags: Sequence[str] | None = None,
     trace_id: str | None = None,
@@ -97,6 +99,10 @@ def agent_trace(
             merged_tags = _merge_tags(tags, extra_tags) or None
         except Exception:
             merged_tags = None
+        try:
+            resolved_workspace_id = workspace_id or get_options().default_workspace_id
+        except RuntimeError:
+            resolved_workspace_id = workspace_id
 
         def _wrap(*args: P.args, **kwargs: P.kwargs) -> R:
             trace_handle = None
@@ -104,6 +110,7 @@ def agent_trace(
                 with client.agent_trace(
                     agent_name=agent_name,
                     model_id=model_id,
+                    workspace_id=resolved_workspace_id,
                     metadata=_copy_mapping(metadata),
                     tags=merged_tags,
                     trace_id=trace_id,
@@ -123,6 +130,7 @@ def agent_trace(
                 with client.agent_trace(
                     agent_name=agent_name,
                     model_id=model_id,
+                    workspace_id=resolved_workspace_id,
                     metadata=_copy_mapping(metadata),
                     tags=merged_tags,
                     trace_id=trace_id,

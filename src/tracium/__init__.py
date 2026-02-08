@@ -89,6 +89,7 @@ def init(
     default_agent_name: str = "app",
     default_model_id: str | None = None,
     default_version: str | None = None,
+    workspace_id: str | None = None,
     default_tags: Sequence[str] | None = None,
     default_metadata: Mapping[str, Any] | None = None,
     auto_instrument_langchain: bool = True,
@@ -109,6 +110,7 @@ def init(
             all automatic traces will use this version. If not provided, version will
             be None (not the SDK version). You should provide your application's
             version, not the SDK version.
+        workspace_id: Workspace ID for all traces and spans (or set TRACIUM_WORKSPACE_ID env var)
         default_tags: Default tags to apply to all traces
         default_metadata: Default metadata to apply to all traces
         auto_instrument_langchain: Enable automatic LangChain instrumentation
@@ -131,6 +133,8 @@ def init(
     if config is not None and base_url is not None:
         raise ValueError("Provide either config or base_url, not both.")
 
+    default_workspace_id = workspace_id or os.getenv("TRACIUM_WORKSPACE_ID")
+
     client_config = config or TraciumClientConfig()
     if base_url is not None:
         client_config = TraciumClientConfig(
@@ -144,6 +148,7 @@ def init(
         default_agent_name=default_agent_name,
         default_model_id=default_model_id,
         default_version=default_version,
+        default_workspace_id=default_workspace_id,
         default_tags=list(default_tags or []),
         default_metadata=dict(default_metadata or {}),
         auto_instrument_langchain=auto_instrument_langchain,
@@ -193,6 +198,7 @@ def start_trace(
     agent_name: str | None = None,
     model_id: str | None = None,
     version: str | None = None,
+    workspace_id: str | None = None,
     metadata: Mapping[str, Any] | None = None,
     tags: Sequence[str] | None = None,
     trace_id: str | None = None,
@@ -209,6 +215,7 @@ def start_trace(
         agent_name=agent_name or options.default_agent_name,
         model_id=model_id or options.default_model_id,
         version=version or options.default_version,
+        workspace_id=workspace_id or options.default_workspace_id,
         metadata=merged_metadata,
         tags=merged_tags,
         trace_id=trace_id,
