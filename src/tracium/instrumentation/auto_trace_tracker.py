@@ -345,37 +345,41 @@ def _find_workflow_entry_point() -> tuple[str, str]:
     For CLI/batch scripts, this finds the outermost user function.
 
     Returns a unique identifier for the entry frame and a human-readable name.
+    Never raises; returns ("atexit:workflow", "workflow") on any error.
     """
-    web_route_info = _get_web_route_info()
-    if web_route_info is not None:
-        route_path, display_name = web_route_info
-        frame_key = f"web:{route_path}"
-        return frame_key, display_name
+    try:
+        web_route_info = _get_web_route_info()
+        if web_route_info is not None:
+            route_path, display_name = web_route_info
+            frame_key = f"web:{route_path}"
+            return frame_key, display_name
 
-    user_frames = _get_user_frames()
-    if not user_frames:
+        user_frames = _get_user_frames()
+        if not user_frames:
+            return "atexit:workflow", "workflow"
+
+        endpoint_info = _find_endpoint_handler(user_frames)
+        if endpoint_info is not None:
+            func_name, file_path, frame_key = endpoint_info
+            return frame_key, func_name
+
+        entry_function, entry_file, entry_line, _ = user_frames[-1]
+        frame_key = f"{entry_file}:{entry_function}:{entry_line}"
+
+        if entry_function == "<module>":
+            filename_stem = Path(entry_file).stem
+            if filename_stem == "__main__":
+                filename_stem = Path(entry_file).name
+                if filename_stem.endswith(".py"):
+                    filename_stem = filename_stem[:-3]
+            return (
+                frame_key,
+                filename_stem if filename_stem and filename_stem != "__main__" else entry_function,
+            )
+
+        return frame_key, entry_function
+    except Exception:
         return "atexit:workflow", "workflow"
-
-    endpoint_info = _find_endpoint_handler(user_frames)
-    if endpoint_info is not None:
-        func_name, file_path, frame_key = endpoint_info
-        return frame_key, func_name
-
-    entry_function, entry_file, entry_line, _ = user_frames[-1]
-    frame_key = f"{entry_file}:{entry_function}:{entry_line}"
-
-    if entry_function == "<module>":
-        filename_stem = Path(entry_file).stem
-        if filename_stem == "__main__":
-            filename_stem = Path(entry_file).name
-            if filename_stem.endswith(".py"):
-                filename_stem = filename_stem[:-3]
-        return (
-            frame_key,
-            filename_stem if filename_stem and filename_stem != "__main__" else entry_function,
-        )
-
-    return frame_key, entry_function
 
 
 def get_or_create_auto_trace(
@@ -448,21 +452,27 @@ def get_or_create_auto_trace(
 
     if agent_name == "app" or agent_name == default_agent_name or not agent_name:
         if entry_function_name and entry_function_name not in ("workflow", "<module>"):
-            normalized = entry_function_name.replace("_", "-")
-            if normalized and normalized not in ("main", "<module>"):
-                agent_name = normalized
+            try:
+                normalized = entry_function_name.replace("_", "-")
+                if normalized and normalized not in ("main", "<module>"):
+                    agent_name = normalized
+            except Exception:
+                pass
 
         if not agent_name or agent_name in ("app", default_agent_name):
             if entry_function_name in ("workflow", "<module>") and ":" in entry_frame_id:
-                file_path = entry_frame_id.split(":")[0]
-                if file_path and Path(file_path).exists():
-                    script_name = Path(file_path).stem
-                    if script_name == "__main__":
-                        script_name = Path(file_path).name
-                        if script_name.endswith(".py"):
-                            script_name = script_name[:-3]
-                    if script_name and script_name != "__main__":
-                        agent_name = script_name.replace("_", "-")
+                try:
+                    file_path = entry_frame_id.split(":")[0]
+                    if file_path and Path(file_path).exists():
+                        script_name = Path(file_path).stem
+                        if script_name == "__main__":
+                            script_name = Path(file_path).name
+                            if script_name.endswith(".py"):
+                                script_name = script_name[:-3]
+                        if script_name and script_name != "__main__":
+                            agent_name = script_name.replace("_", "-")
+                except Exception:
+                    pass
 
         if not agent_name or agent_name in ("app", default_agent_name, "main"):
             agent_name = detect_agent_name(default_agent_name)
@@ -473,6 +483,11 @@ def get_or_create_auto_trace(
         except RuntimeError:
             version = None
 
+    try:
+        workspace_id = get_options().default_workspace_id
+    except RuntimeError:
+        workspace_id = None
+
     register_cleanup()
 
     trace_manager = client.agent_trace(
@@ -480,6 +495,7 @@ def get_or_create_auto_trace(
         model_id=model_id,
         tags=tags or [],
         version=version,
+        workspace_id=workspace_id,
         lazy_start=True,
     )
     trace_handle = trace_manager.__enter__()

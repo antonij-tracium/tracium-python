@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-02-08
+
+### Added
+
+- **Workspace scoping**: `workspace_id` on `tracium.trace()` and `tracium.init()` to set the workspace for all traces and spans created by that instance. Optional `default_workspace_id` in config (or `TRACIUM_WORKSPACE_ID` env var) applies when not passed per call.
+
 ## [1.0.0] - 2026-01-27
 
 ### Added
@@ -179,6 +185,7 @@ print(f"Success rate: {stats['success_rate']:.1%}")
 
 ## Version History
 
+- **1.0.2**: Added workspace_id to trace() and init() for workspace-scoped tracing
 - **0.2.0**: Added web framework support (Flask, Django, FastAPI, Celery) with uvicorn and WSGI compatibility, fixed existing bugs
 - **0.1.2**: Fixed LangChain optional dependency handling, updated CI/CD to use TestPyPI
 - **0.1.0**: Initial public release with full feature set including automatic instrumentation, context propagation, and comprehensive tooling

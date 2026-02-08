@@ -25,6 +25,7 @@ class TraciumInitOptions:
     default_agent_name: str = "app"
     default_model_id: str | None = None
     default_version: str | None = None
+    default_workspace_id: str | None = None
     default_tags: list[str] = field(default_factory=list)
     default_metadata: dict[str, Any] = field(default_factory=dict)
     auto_instrument_langchain: bool = True
