@@ -3,7 +3,6 @@ Tests for span payload sanitizer (large content / base64 replacement).
 """
 
 import base64
-import pytest
 
 from tracium.utils.payload_sanitizer import PLACEHOLDER_OVER_SIZE, sanitize_span_io
 
@@ -22,7 +21,6 @@ class TestSanitizeSpanIO:
         assert out == "[image/data omitted for size]"
 
     def test_large_base64_replaced(self):
-        # Valid base64, > BASE64_MIN_BYTES
         large_b64 = base64.b64encode(b"x" * 3000).decode("ascii")
         out = sanitize_span_io(large_b64)
         assert out == "[image/data omitted for size]"
@@ -40,10 +38,8 @@ class TestSanitizeSpanIO:
             PLACEHOLDER_TRUNCATED,
         )
 
-        # Use plain text (spaces) so it's not treated as base64. Long enough to trigger truncation.
         large = "plain text " * (MAX_STRING_BYTES // 10 + 100)
         out = sanitize_span_io(large)
-        # Either we get a truncated string, or total exceeds 100KB and we get the over-size placeholder
         assert PLACEHOLDER_TRUNCATED in out or out == PLACEHOLDER_OVER_SIZE
         if isinstance(out, str) and out != PLACEHOLDER_OVER_SIZE:
             assert len(out.encode("utf-8")) <= MAX_STRING_BYTES + 100
@@ -71,7 +67,6 @@ class TestSanitizeSpanIO:
         assert out["a"] == "[image/data omitted for size]"
 
     def test_total_over_100kb_replaced(self):
-        # Plain text (not base64) so it's kept; many chunks exceed 100KB when JSON-encoded
-        big_list = ["plain chunk " * 400 for _ in range(30)]  # ~144KB when JSON-encoded
+        big_list = ["plain chunk " * 400 for _ in range(30)]
         out = sanitize_span_io(big_list)
         assert out == PLACEHOLDER_OVER_SIZE

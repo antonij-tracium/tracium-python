@@ -12,9 +12,7 @@ import json
 import re
 from typing import Any
 
-# Max total size (UTF-8 bytes) for span input or output when sent to the backend.
 MAX_SPAN_IO_BYTES = 100_000
-# Max size for a single string before truncation.
 MAX_STRING_BYTES = 100_000
 BASE64_MIN_BYTES = 2_000
 MAX_DEPTH = 50
@@ -49,7 +47,6 @@ def _truncate_string(s: str, max_bytes: int) -> str:
     if keep <= 0:
         return suffix
     truncated = encoded[:keep]
-    # Back up to last valid UTF-8 boundary
     while truncated and (truncated[-1] & 0xC0) == 0x80:
         truncated = truncated[:-1]
     try:
