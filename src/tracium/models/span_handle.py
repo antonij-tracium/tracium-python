@@ -21,6 +21,7 @@ from ..helpers.validation import (
 )
 from ..models.trace_state import TraceState
 from ..utils.datetime_utils import _duration_ms, _format_exception, _isoformat, _utcnow
+from ..utils.payload_sanitizer import sanitize_span_io
 from ..utils.tags import _merge_tags, _normalize_tags
 from ..utils.validation import _validate_and_log
 
@@ -262,7 +263,7 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
             initial_payload = self._build_base_payload("in_progress", self._start_time)
 
             if self._input is not None:
-                initial_payload["input"] = self._input
+                initial_payload["input"] = sanitize_span_io(self._input)
 
             try:
                 self.state.client.record_agent_spans(self.state.trace_id, [initial_payload])
@@ -312,9 +313,9 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
             api_payload = self._build_base_payload(status, self._start_time, end_time)
 
             if self._input is not None:
-                api_payload["input"] = self._input
+                api_payload["input"] = sanitize_span_io(self._input)
             if self._output is not None:
-                api_payload["output"] = self._output
+                api_payload["output"] = sanitize_span_io(self._output)
             if self._error:
                 api_payload["error"] = self._error
             if latency_ms is not None:
@@ -340,9 +341,9 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
             if self.parent_span_id:
                 payload["parent_span_id"] = self.parent_span_id
             if self._input is not None:
-                payload["input"] = self._input
+                payload["input"] = sanitize_span_io(self._input)
             if self._output is not None:
-                payload["output"] = self._output
+                payload["output"] = sanitize_span_io(self._output)
             if self._tags:
                 payload["tags"] = self._tags
             if self._error:

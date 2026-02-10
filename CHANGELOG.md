@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-02-09
+
+### Fixed
+
+- **Payload size**: Span input and output are now always sanitized and capped at 100KB to avoid "payload too large" errors when sending to the backend. Base64 and data-URL content (e.g. images) are replaced with a short placeholder; long strings are truncated. If the sanitized payload still exceeds 100KB, it is replaced with a single placeholder. Users still see that a document or image was used, prompt text, and the LLM response, without hitting backend size limits.
+
 ## [1.0.2] - 2026-02-08
 
 ### Added
