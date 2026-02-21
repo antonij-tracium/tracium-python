@@ -167,6 +167,7 @@ class TraciumClient:
         self._plan_fetched: bool = False
 
         from ..helpers.version_check import check_for_update
+
         check_for_update(is_test=is_test_scenario)
 
         logger.debug(

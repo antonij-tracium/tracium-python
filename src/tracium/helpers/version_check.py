@@ -1,6 +1,7 @@
 """
 Check for SDK updates at init and log a one-time warning if outdated.
 """
+
 from __future__ import annotations
 
 import httpx
@@ -42,8 +43,7 @@ def check_for_update(*, is_test: bool = False) -> None:
 
             _warned = True
             logger.warning(
-                "A new version of tracium (%s) is available. "
-                "Upgrade with: pip install -U tracium",
+                "A new version of tracium (%s) is available. Upgrade with: pip install -U tracium",
                 latest,
             )
     except Exception:
