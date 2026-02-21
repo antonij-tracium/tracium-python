@@ -15,7 +15,7 @@
 
 This is the development guide for the Tracium Python SDK. For user documentation, see [https://docs.tracium.ai](https://docs.tracium.ai).
 
-**Version:** 1.0.2
+**Version:** 1.0.4
 
 ## Project Overview
 
@@ -82,7 +82,8 @@ tracium/
 │       │   ├── retry.py              # Sync retry logic
 │       │   ├── security.py          # Security utilities
 │       │   ├── thread_helpers.py    # Threading utilities
-│       │   └── validation.py        # Input validation
+│       │   ├── validation.py        # Input validation
+│       │   └── version_check.py     # PyPI version check at init
 │       ├── instrumentation/         # Auto-instrumentation
 │       │   ├── auto_detection.py    # Library detection
 │       │   ├── auto_instrumentation.py  # Main instrumentation logic

@@ -50,7 +50,7 @@ class HTTPClient:
 
     def _get_tenant_headers(self) -> dict[str, str]:
         """Get headers including tenant ID if available."""
-        headers = {}
+        headers: dict[str, str] = {}
         try:
             tenant_id = get_current_tenant()
             if tenant_id:
