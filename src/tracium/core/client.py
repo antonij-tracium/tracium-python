@@ -143,9 +143,12 @@ class TraciumClient:
             config.security_config = SecurityConfig()
         self._config = config
 
+        from .version import __version__ as _sdk_version
+
         headers = {
             "X-API-Key": validated_api_key,
             "User-Agent": self._config.user_agent,
+            "X-Tracium-SDK-Version": _sdk_version,
         }
         httpx_client = httpx.Client(
             base_url=self._config.base_url,
@@ -162,6 +165,9 @@ class TraciumClient:
 
         self._user_plan: str | None = None
         self._plan_fetched: bool = False
+
+        from ..helpers.version_check import check_for_update
+        check_for_update(is_test=is_test_scenario)
 
         logger.debug(
             "TraciumClient initialized",

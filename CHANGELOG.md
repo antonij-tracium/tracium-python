@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-02-21
+
+### Added
+
+- **Version check on init**: The SDK now checks PyPI for newer versions when the client is initialized and logs a one-time warning if an upgrade is available. Skips the check when using test/mock/localhost base URLs. Silent on network failure to avoid breaking initialization.
+
 ## [1.0.3] - 2026-02-09
 
 ### Fixed
@@ -205,6 +211,8 @@ print(f"Success rate: {stats['success_rate']:.1%}")
 
 ## Version History
 
+- **1.0.4**: Version check on init - warns when a newer SDK is available on PyPI
+- **1.0.3**: Payload size sanitization - span input/output capped at 100KB to avoid backend errors
 - **1.0.2**: Added workspace_id to trace() and init() for workspace-scoped tracing
 - **0.2.0**: Added web framework support (Flask, Django, FastAPI, Celery) with uvicorn and WSGI compatibility, fixed existing bugs
 - **0.1.2**: Fixed LangChain optional dependency handling, updated CI/CD to use TestPyPI
