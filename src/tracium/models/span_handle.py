@@ -95,6 +95,13 @@ class AgentSpanHandle:
         except Exception:
             pass
 
+    def set_model_id(self, model_id: str | None) -> None:
+        try:
+            if model_id:
+                self._context.set_model_id(model_id)
+        except Exception:
+            pass
+
     def mark_failed(
         self,
         error: str,
@@ -409,6 +416,10 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
                 self._cached_input_tokens = int(cached_input_tokens)
             except (TypeError, ValueError):
                 pass
+
+    def set_model_id(self, model_id: str | None) -> None:
+        if model_id:
+            self._model_id = str(model_id)
 
     def set_failure(
         self,
