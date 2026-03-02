@@ -31,6 +31,7 @@ class TraciumInitOptions:
     auto_instrument_langchain: bool = True
     auto_instrument_langgraph: bool = True
     auto_instrument_llm_clients: bool = True
+    capture_media: bool = False
 
 
 @dataclass

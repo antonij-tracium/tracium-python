@@ -21,6 +21,8 @@ PLACEHOLDER_IMAGE_OR_DATA = "[image/data omitted for size]"
 PLACEHOLDER_TRUNCATED = " (truncated for size)"
 PLACEHOLDER_OVER_SIZE = "[content omitted: exceeded 100KB]"
 
+MEDIA_PASSTHROUGH_KEYS = frozenset({"audio_b64", "image_b64"})
+
 
 def _is_likely_base64_or_data_url(s: str) -> bool:
     if not isinstance(s, str) or len(s) < BASE64_MIN_BYTES:
@@ -67,7 +69,9 @@ def _sanitize_value(value: Any, depth: int) -> Any:
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         for k, v in value.items():
-            if k == "image_url" and isinstance(v, dict) and isinstance(v.get("url"), str):
+            if k in MEDIA_PASSTHROUGH_KEYS and isinstance(v, str):
+                out[k] = v
+            elif k == "image_url" and isinstance(v, dict) and isinstance(v.get("url"), str):
                 url = v["url"]
                 if _is_likely_base64_or_data_url(url):
                     out[k] = {"url": PLACEHOLDER_IMAGE_OR_DATA}

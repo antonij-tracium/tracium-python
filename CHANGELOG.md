@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-03-02
+
+### Added
+
+- **OpenAI integration (expanded)**: Instrumentation now covers all major OpenAI API surfaces. Every call is captured as a span:
+  - Chat completions and legacy completions (sync and async)
+  - Embeddings
+  - Images (generate, edit, create_variation)
+  - Audio: transcriptions, translations, and speech
+  - Moderations
+  - Responses API
+  - Beta Threads: `create_and_run`, `create_and_run_poll`, `create_and_run_stream`
+  - Beta Threads Runs: `create`, `create_and_poll`, `stream`
+  - Streaming responses with full output and token usage capture (including cached tokens)
+
 ## [1.0.4] - 2026-02-21
 
 ### Added
@@ -211,6 +226,7 @@ print(f"Success rate: {stats['success_rate']:.1%}")
 
 ## Version History
 
+- **1.0.5**: Expanded OpenAI integration - all major API surfaces (chat, completions, embeddings, images, audio, moderations, responses, beta threads) with streaming and token usage
 - **1.0.4**: Version check on init - warns when a newer SDK is available on PyPI
 - **1.0.3**: Payload size sanitization - span input/output capped at 100KB to avoid backend errors
 - **1.0.2**: Added workspace_id to trace() and init() for workspace-scoped tracing

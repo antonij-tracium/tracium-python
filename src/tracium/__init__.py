@@ -95,6 +95,7 @@ def init(
     auto_instrument_langchain: bool = True,
     auto_instrument_langgraph: bool = True,
     auto_instrument_llm_clients: bool = True,
+    capture_media: bool = False,
     transport: Any | None = None,
 ) -> TraciumClient:
     """
@@ -116,6 +117,9 @@ def init(
         auto_instrument_langchain: Enable automatic LangChain instrumentation
         auto_instrument_langgraph: Enable automatic LangGraph instrumentation
         auto_instrument_llm_clients: Enable automatic LLM client instrumentation
+        capture_media: Capture audio/image data as base64 in spans (default: False).
+            When enabled, OpenAI audio (speech synthesis) and image outputs are stored
+            as base64-encoded data for playback/display in the Tracium UI.
         transport: Optional custom HTTP transport
 
     Returns:
@@ -154,6 +158,7 @@ def init(
         auto_instrument_langchain=auto_instrument_langchain,
         auto_instrument_langgraph=auto_instrument_langgraph,
         auto_instrument_llm_clients=auto_instrument_llm_clients,
+        capture_media=capture_media,
     )
     set_client(client, options=options)
 
