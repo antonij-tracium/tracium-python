@@ -129,6 +129,7 @@ def _finalize_stream(
             _get_web_route_info,
             close_auto_trace_if_needed,
         )
+
         close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
     except Exception:
         pass
@@ -225,7 +226,13 @@ def _normalize_input(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
         if "assistant_id" in kwargs or "thread_id" in kwargs:
             payload: dict[str, Any] = {
                 k: kwargs[k]
-                for k in ("assistant_id", "thread_id", "model", "instructions", "additional_messages")
+                for k in (
+                    "assistant_id",
+                    "thread_id",
+                    "model",
+                    "instructions",
+                    "additional_messages",
+                )
                 if k in kwargs
             }
             if "thread" in kwargs and isinstance(kwargs["thread"], dict):
@@ -255,6 +262,7 @@ def patch_openai(client: TraciumClient) -> None:
     try:
         if openai is None:
             import openai as imported_openai
+
             openai = imported_openai
         openai_module = openai
     except Exception:
@@ -269,15 +277,18 @@ def patch_openai(client: TraciumClient) -> None:
         try:
             original = getattr(namespace, method_name)
             if is_async:
+
                 async def traced(*args: Any, **kwargs: Any) -> Any:
                     return await _trace_openai_call_async(
                         client, lambda: original(*args, **kwargs), args, kwargs
                     )
             else:
+
                 def traced(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
                     return _trace_openai_call(
                         client, lambda: original(*args, **kwargs), args, kwargs
                     )
+
             setattr(namespace, method_name, traced)
         except Exception:
             pass
@@ -301,6 +312,7 @@ def patch_openai(client: TraciumClient) -> None:
 def _handle_error(e: Exception, span_handle: Any, span_context: Any) -> None:
     try:
         import traceback
+
         span_handle.record_output(
             {"error": str(e), "error_type": type(e).__name__, "traceback": traceback.format_exc()}
         )
@@ -314,6 +326,7 @@ def _handle_error(e: Exception, span_handle: Any, span_context: Any) -> None:
             close_auto_trace_if_needed,
             get_current_auto_trace_context,
         )
+
         if ctx := get_current_auto_trace_context():
             ctx.mark_span_failed()
         close_auto_trace_if_needed(force_close=_get_web_route_info() is not None, error=e)
@@ -413,6 +426,7 @@ def _finalize_response(
         _get_web_route_info,
         close_auto_trace_if_needed,
     )
+
     close_auto_trace_if_needed(force_close=_get_web_route_info() is not None)
 
 
@@ -424,6 +438,7 @@ def _trace_openai_call(
 ) -> Any:
     try:
         from ..context.trace_context import current_trace
+
         if (trace := current_trace()) and trace.tags and "@langchain" in trace.tags:
             return original_fn()
     except Exception:
@@ -485,6 +500,7 @@ async def _trace_openai_call_async(
 ) -> Any:
     try:
         from ..context.trace_context import current_trace
+
         if (trace := current_trace()) and trace.tags and "@langchain" in trace.tags:
             return await original_fn()
     except Exception:
@@ -729,9 +745,7 @@ def _extract_output_data(response: Any) -> Any:
             if hasattr(first, "url") or hasattr(first, "b64_json"):
                 return [
                     {
-                        k: (
-                            "[base64 image data omitted]" if k == "b64_json" else getattr(item, k)
-                        )
+                        k: ("[base64 image data omitted]" if k == "b64_json" else getattr(item, k))
                         for k in ("url", "revised_prompt", "b64_json")
                         if hasattr(item, k) and getattr(item, k)
                     }
@@ -751,9 +765,7 @@ def _extract_output_data(response: Any) -> Any:
 
     try:
         if hasattr(response, "results") and isinstance(response.results, list):
-            return [
-                r.model_dump() if hasattr(r, "model_dump") else r for r in response.results
-            ]
+            return [r.model_dump() if hasattr(r, "model_dump") else r for r in response.results]
     except Exception:
         pass
 
