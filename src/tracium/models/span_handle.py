@@ -272,15 +272,21 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
             if self._input is not None:
                 initial_payload["input"] = sanitize_span_io(self._input)
 
-            try:
-                self.state.client.record_agent_spans(self.state.trace_id, [initial_payload])
-                self._initially_sent = True
+            skip_initial_send = (
+                self.span_type == "llm"
+                and not (self._model_id or self.state.model_id)
+            )
 
-                from ..utils.span_registry import mark_span_sent
+            if not skip_initial_send:
+                try:
+                    self.state.client.record_agent_spans(self.state.trace_id, [initial_payload])
+                    self._initially_sent = True
 
-                mark_span_sent(self.state.trace_id, self.span_id)
-            except Exception:
-                pass
+                    from ..utils.span_registry import mark_span_sent
+
+                    mark_span_sent(self.state.trace_id, self.span_id)
+                except Exception:
+                    pass
 
         except Exception as e:
             logger.debug(f"Span __enter__ failed (continuing): {type(e).__name__}: {e}")
