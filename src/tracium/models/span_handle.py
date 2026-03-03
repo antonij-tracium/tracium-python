@@ -272,9 +272,8 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
             if self._input is not None:
                 initial_payload["input"] = sanitize_span_io(self._input)
 
-            skip_initial_send = (
-                self.span_type == "llm"
-                and not (self._model_id or self.state.model_id)
+            skip_initial_send = self.span_type == "llm" and not (
+                self._model_id or self.state.model_id
             )
 
             if not skip_initial_send:

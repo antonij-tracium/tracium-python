@@ -818,9 +818,7 @@ def _complete_assistant_run_sync(
     try:
         deadline = time.monotonic() + max_wait_sec
         while time.monotonic() < deadline:
-            run = openai_client.beta.threads.runs.retrieve(
-                thread_id=thread_id, run_id=run_id
-            )
+            run = openai_client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run_id)
             status = getattr(run, "status", None)
             if status in _PENDING_RUN_TERMINAL_STATUSES:
                 reply_text = None
@@ -856,16 +854,12 @@ async def _complete_assistant_run_async(
     try:
         deadline = time.monotonic() + max_wait_sec
         while time.monotonic() < deadline:
-            run = await openai_client.beta.threads.runs.retrieve(
-                thread_id=thread_id, run_id=run_id
-            )
+            run = await openai_client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run_id)
             status = getattr(run, "status", None)
             if status in _PENDING_RUN_TERMINAL_STATUSES:
                 reply_text = None
                 if status == "completed":
-                    reply_text = await _fetch_assistant_reply_async(
-                        openai_client, thread_id
-                    )
+                    reply_text = await _fetch_assistant_reply_async(openai_client, thread_id)
                 update = _build_assistant_run_update_payload(run, status, reply_text)
                 tracium_client.update_agent_span(trace_id, span_id, update)
                 return
