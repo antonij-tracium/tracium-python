@@ -11,11 +11,16 @@ Tracing errors will never break user applications.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from ..core.client import TraciumClient
 from ..helpers.global_state import STATE, get_default_tags, get_options
 from ..helpers.logging_config import get_logger
+from ..utils.datetime_utils import _isoformat, _utcnow
 
 openai = None
 logger = get_logger()
@@ -486,6 +491,29 @@ def _trace_openai_call(
                         output = reply
 
             _finalize_response(response, span_handle, span_context, model_id, output)
+            if _is_pending_assistant_run(response):
+                oai = _get_openai_client(args)
+                if oai:
+                    trace_id = span_handle.trace_id
+                    span_id = span_handle.id
+                    if trace_id:
+                        thread = threading.Thread(
+                            target=_complete_assistant_run_sync,
+                            args=(
+                                oai,
+                                response.thread_id,
+                                response.id,
+                                trace_id,
+                                span_id,
+                                client,
+                            ),
+                            kwargs={
+                                "poll_interval_sec": _ASSISTANT_RUN_POLL_INTERVAL_SEC,
+                                "max_wait_sec": _ASSISTANT_RUN_MAX_WAIT_SEC,
+                            },
+                            daemon=True,
+                        )
+                        thread.start()
     except Exception as e:
         logger.debug(f"OpenAI response tracing failed (ignored): {e}")
 
@@ -548,6 +576,24 @@ async def _trace_openai_call_async(
                         output = reply
 
             _finalize_response(response, span_handle, span_context, model_id, output)
+            if _is_pending_assistant_run(response):
+                oai = _get_openai_client(args)
+                if oai:
+                    trace_id = span_handle.trace_id
+                    span_id = span_handle.id
+                    if trace_id:
+                        asyncio.create_task(
+                            _complete_assistant_run_async(
+                                oai,
+                                response.thread_id,
+                                response.id,
+                                trace_id,
+                                span_id,
+                                client,
+                                poll_interval_sec=_ASSISTANT_RUN_POLL_INTERVAL_SEC,
+                                max_wait_sec=_ASSISTANT_RUN_MAX_WAIT_SEC,
+                            )
+                        )
     except Exception as e:
         logger.debug(f"OpenAI async response tracing failed (ignored): {e}")
 
@@ -642,6 +688,17 @@ def _is_completed_assistant_run(output: Any, response: Any) -> bool:
     )
 
 
+def _is_pending_assistant_run(response: Any) -> bool:
+    """True if response is a Run with status queued or in_progress (not yet terminal)."""
+    try:
+        if not hasattr(response, "thread_id") or not hasattr(response, "id"):
+            return False
+        status = getattr(response, "status", None)
+        return status in _PENDING_RUN_STATUSES
+    except Exception:
+        return False
+
+
 def _parse_thread_messages(page: Any) -> list[dict[str, str]] | None:
     out = [
         {"role": msg.role, "content": text}
@@ -691,6 +748,132 @@ async def _fetch_assistant_reply_async(openai_client: Any, thread_id: str) -> st
         return _extract_assistant_reply(page)
     except Exception:
         return None
+
+
+_PENDING_RUN_STATUSES = frozenset({"queued", "in_progress"})
+_PENDING_RUN_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "expired"})
+_ASSISTANT_RUN_POLL_INTERVAL_SEC = 2
+_ASSISTANT_RUN_MAX_WAIT_SEC = 300  # 5 minutes
+
+
+def _completed_at_from_run(run: Any) -> str:
+    """Return ISO datetime string for run completion or now."""
+    try:
+        completed_at = getattr(run, "completed_at", None)
+        if completed_at is not None:
+            if isinstance(completed_at, datetime):
+                return _isoformat(completed_at)
+            if isinstance(completed_at, (int | float)):
+                return _isoformat(datetime.fromtimestamp(completed_at, tz=timezone.utc))
+    except Exception:
+        pass
+    return _isoformat(_utcnow())
+
+
+def _build_assistant_run_update_payload(
+    run: Any,
+    status: str,
+    reply_text: str | None = None,
+) -> dict[str, Any]:
+    """Build span update payload from a terminal Run and optional assistant reply."""
+    payload: dict[str, Any] = {
+        "span_type": "llm",
+        "status": status,
+    }
+    payload["completed_at"] = _completed_at_from_run(run)
+    model_id = _get_str_attr(run, "model")
+    if model_id:
+        payload["model_id"] = model_id
+    if reply_text is not None:
+        payload["output_text"] = reply_text
+    tokens = _extract_token_usage(run)
+    if any(tokens):
+        payload["input_tokens"] = tokens[0]
+        payload["output_tokens"] = tokens[1]
+        if tokens[2] is not None:
+            payload["cached_input_tokens"] = tokens[2]
+    if status in ("failed", "cancelled", "expired"):
+        try:
+            last_error = getattr(run, "last_error", None)
+            if last_error is not None and hasattr(last_error, "message"):
+                payload["error"] = str(last_error.message)
+            elif isinstance(last_error, str):
+                payload["error"] = last_error
+        except Exception:
+            pass
+    return payload
+
+
+def _complete_assistant_run_sync(
+    openai_client: Any,
+    thread_id: str,
+    run_id: str,
+    trace_id: str,
+    span_id: str,
+    tracium_client: TraciumClient,
+    poll_interval_sec: int = _ASSISTANT_RUN_POLL_INTERVAL_SEC,
+    max_wait_sec: int = _ASSISTANT_RUN_MAX_WAIT_SEC,
+) -> None:
+    """Poll run until terminal, then update the span with final status and output."""
+    try:
+        deadline = time.monotonic() + max_wait_sec
+        while time.monotonic() < deadline:
+            run = openai_client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run_id)
+            status = getattr(run, "status", None)
+            if status in _PENDING_RUN_TERMINAL_STATUSES:
+                reply_text = None
+                if status == "completed":
+                    reply_text = _fetch_assistant_reply_sync(openai_client, thread_id)
+                update = _build_assistant_run_update_payload(run, status, reply_text)
+                tracium_client.update_agent_span(trace_id, span_id, update)
+                return
+            time.sleep(poll_interval_sec)
+        logger.debug(
+            "Assistant run background completion timed out",
+            extra={"trace_id": trace_id, "span_id": span_id, "run_id": run_id},
+        )
+    except Exception as e:
+        logger.debug(
+            "Assistant run background completion failed: %s",
+            e,
+            extra={"trace_id": trace_id, "span_id": span_id},
+        )
+
+
+async def _complete_assistant_run_async(
+    openai_client: Any,
+    thread_id: str,
+    run_id: str,
+    trace_id: str,
+    span_id: str,
+    tracium_client: TraciumClient,
+    poll_interval_sec: int = _ASSISTANT_RUN_POLL_INTERVAL_SEC,
+    max_wait_sec: int = _ASSISTANT_RUN_MAX_WAIT_SEC,
+) -> None:
+    """Poll run until terminal, then update the span with final status and output."""
+    try:
+        deadline = time.monotonic() + max_wait_sec
+        while time.monotonic() < deadline:
+            run = await openai_client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run_id)
+            status = getattr(run, "status", None)
+            if status in _PENDING_RUN_TERMINAL_STATUSES:
+                reply_text = None
+                if status == "completed":
+                    reply_text = await _fetch_assistant_reply_async(openai_client, thread_id)
+                update = _build_assistant_run_update_payload(run, status, reply_text)
+                tracium_client.update_agent_span(trace_id, span_id, update)
+                return
+            await asyncio.sleep(poll_interval_sec)
+        logger.debug(
+            "Assistant run background completion timed out",
+            extra={"trace_id": trace_id, "span_id": span_id, "run_id": run_id},
+        )
+    except Exception as e:
+        logger.debug(
+            "Assistant run background completion failed: %s",
+            e,
+            extra={"trace_id": trace_id, "span_id": span_id},
+        )
 
 
 def _extract_output_data(response: Any) -> Any:
