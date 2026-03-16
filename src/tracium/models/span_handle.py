@@ -28,6 +28,52 @@ from ..utils.validation import _validate_and_log
 if TYPE_CHECKING:
     pass
 
+
+def _extract_system_prompt(input_data: Any) -> str | None:
+    """
+    Extract the system prompt from an LLM span's input data.
+
+    Handles input formats from all supported integrations:
+    - OpenAI: list of {"role": "system", "content": "..."}
+    - Anthropic: dict with "system" key, or messages list with role=system
+    - Google Gemini: dict with "system_instruction" key
+    - LangChain / LangGraph: list of message dicts or objects with type/role "system"
+    """
+    if input_data is None:
+        return None
+
+    if isinstance(input_data, dict):
+        if "system" in input_data:
+            val = input_data["system"]
+            if isinstance(val, str):
+                return val
+        if "system_instruction" in input_data:
+            val = input_data["system_instruction"]
+            if isinstance(val, str):
+                return val
+
+        messages = input_data.get("messages")
+        if isinstance(messages, list):
+            return _extract_system_prompt(messages)
+        return None
+
+    if isinstance(input_data, list):
+        for item in input_data:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role") or item.get("type") or ""
+            if str(role).lower() == "system":
+                content = item.get("content") or item.get("text") or ""
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            return part.get("text") or ""
+        return None
+
+    return None
+
 logger = get_logger()
 
 
@@ -372,6 +418,16 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
                 self.last_payload = payload
             except Exception:
                 self.last_payload = payload
+
+            if self.span_type == "llm":
+                try:
+                    effective_model = self._model_id or self.state.model_id
+                    system_prompt = _extract_system_prompt(self._input)
+                    entry = (self.name, effective_model, system_prompt)
+                    if entry not in self.state._llm_info:
+                        self.state._llm_info.append(entry)
+                except Exception as e:
+                    logger.debug(f"LLM info capture failed (ignored): {type(e).__name__}: {e}")
 
         except Exception as e:
             logger.debug(f"Span __exit__ failed (ignored): {type(e).__name__}: {e}")

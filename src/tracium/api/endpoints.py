@@ -19,6 +19,7 @@ from ..helpers.validation import (
     validate_tags,
     validate_trace_id,
 )
+from ..models.trace_state import LLMTraceSummary
 from ..utils.validation import _validate_and_log
 
 if TYPE_CHECKING:
@@ -208,6 +209,7 @@ class TraciumAPIEndpoints:
         summary: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         tags: Sequence[str] | None = None,
+        llm_summary: LLMTraceSummary | None = None,
     ) -> dict[str, Any]:
         """Complete an agent trace asynchronously."""
         try:
@@ -221,6 +223,13 @@ class TraciumAPIEndpoints:
                 payload["summary"] = summary
             if validated_tags:
                 payload["tags"] = list(validated_tags)
+            if llm_summary is not None:
+                if llm_summary.model is not None:
+                    payload["model"] = str(llm_summary.model)[:255]
+                if llm_summary.system_prompt is not None:
+                    payload["system_prompt"] = str(llm_summary.system_prompt)[:10000]
+                if llm_summary.llm_steps:
+                    payload["llm_steps"] = list(llm_summary.llm_steps)
 
             logger.debug("Completing agent trace", extra={"trace_id": validated_trace_id})
 

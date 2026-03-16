@@ -29,12 +29,33 @@ from ..helpers.validation import (
     validate_trace_id,
 )
 from ..models.span_handle import AgentSpanContext
-from ..models.trace_state import TraceState
+from ..models.trace_state import LLMTraceSummary, TraceState
 from ..utils.datetime_utils import _copy_mapping, _duration_ms, _format_exception, _utcnow
 from ..utils.tags import _merge_tags, _normalize_tags
 from ..utils.validation import _validate_and_log
 
 logger = get_logger()
+
+
+def _combine_llm_info(
+    llm_info: list[tuple[str | None, str | None, str | None]],
+) -> LLMTraceSummary | None:
+    """Combine all (name, model, system_prompt) tuples into an LLMTraceSummary.
+
+    For single-LLM traces this returns the pair as-is. For multi-LLM traces
+    the per-step order is preserved so that ANY change in any step's name,
+    model, or prompt produces a different fingerprint.
+    """
+    if not llm_info:
+        return None
+    steps = tuple({"name": n, "model": m, "system_prompt": p} for n, m, p in llm_info)
+    models = [m for n, m, _ in llm_info if m]
+    prompts = [p for n, _, p in llm_info if p]
+    return LLMTraceSummary(
+        model=" | ".join(models) if models else None,
+        system_prompt=" | ".join(prompts) if prompts else None,
+        llm_steps=steps,
+    )
 
 
 def _safe_execute(operation_name: str, func: Any, default: Any = None) -> Any:
@@ -159,10 +180,12 @@ class AgentTraceHandle:
             self._state.ended_at = _utcnow()
             self._state.duration_ms = _duration_ms(self._state.started_at, self._state.ended_at)
 
+            llm_summary = _combine_llm_info(self._state._llm_info)
             payload = self._state.client.complete_agent_trace(
                 self._state.trace_id,
                 summary=self._state.summary,
                 tags=self._state.tags or None,
+                llm_summary=llm_summary,
             )
             self._state.finished = True
             return (
@@ -534,10 +557,12 @@ class AgentTraceManager(
                     )
             else:
                 if state.remote_started:
+                    llm_summary = _combine_llm_info(state._llm_info)
                     self._client.complete_agent_trace(
                         state.trace_id,
                         summary=state.summary,
                         tags=state.tags or None,
+                        llm_summary=llm_summary,
                     )
                 state.status = "completed"
 
