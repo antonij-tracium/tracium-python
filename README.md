@@ -15,7 +15,7 @@
 
 This is the development guide for the Tracium Python SDK. For user documentation, see [https://docs.tracium.ai](https://docs.tracium.ai).
 
-**Version:** 1.5.1
+**Version:** 1.5.2
 
 ## Project Overview
 

@@ -52,12 +52,7 @@ def _create_trace_and_span(
     span_handle = span_context.__enter__()
 
     if messages_payload is not None:
-        payload = (
-            messages_payload["messages"]
-            if isinstance(messages_payload, dict) and "messages" in messages_payload
-            else messages_payload
-        )
-        span_handle.record_input(payload)
+        span_handle.record_input(messages_payload)
 
     return trace_handle, span_handle, span_context
 

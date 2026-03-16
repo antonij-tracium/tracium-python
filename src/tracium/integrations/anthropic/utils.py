@@ -6,11 +6,19 @@ from typing import Any
 
 
 def normalize_messages(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any] | None:
-    """Extract messages from Anthropic API call."""
+    """Extract messages and system prompt from Anthropic API call."""
+    result: dict[str, Any] | None = None
     if "messages" in kwargs:
-        return {"messages": kwargs["messages"]}
-    if args and isinstance(args[0], dict) and "messages" in args[0]:
-        return {"messages": args[0]["messages"]}
+        result = {"messages": kwargs["messages"]}
+    elif args and isinstance(args[0], dict) and "messages" in args[0]:
+        result = {"messages": args[0]["messages"]}
+
+    if result is not None:
+        system = kwargs.get("system")
+        if system is not None:
+            result["system"] = system
+        return result
+
     return None
 
 

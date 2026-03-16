@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-03-16
+
+### Added
+
+- **LLM trace summary and auto-versioning**: Completed agent traces now send aggregated LLM metadata to the backend so that versioning can reflect model and prompt changes. The SDK captures model ID and system prompt from each LLM span (across OpenAI, Anthropic, Google Gemini, and LangChain/LangGraph formats), combines them per trace, and sends a summary on trace completion (`model`, `system_prompt`, and per-step `llm_steps`). Any change in model or system prompt across spans produces a different fingerprint for accurate auto-versioning.
+- **System prompt extraction**: New internal helper `_extract_system_prompt()` in span handling that supports Anthropic (top-level `system`), OpenAI (messages with `role: system` and multipart content), Google Gemini (`system_instruction`), and LangChain-style messages (`type`/`role` and `content`/`text`).
+- **Anthropic integration**: `normalize_messages` now preserves the `system` argument in the traced payload; span input records the full messages payload (including system) so the system prompt is available for extraction and auto-versioning.
+- **API**: `complete_agent_trace` now accepts an optional `llm_summary` parameter (`LLMTraceSummary`) and sends `model`, `system_prompt`, and `llm_steps` to the backend (with length limits: model 255 chars, system_prompt 10000 chars).
+- **Tests**: New test modules under `tests/test_models/` for `_extract_system_prompt` and for `_combine_llm_info` / `LLMTraceSummary` (single-span, multi-span, ordering, and fingerprinting behavior).
+
+### Changed
+
+- **Trace completion**: When an agent trace is completed (via `AgentTraceHandle` or `AgentTraceManager`), the combined LLM info from all LLM spans in that trace is sent as `llm_summary` to the backend.
+- **Trace state**: `TraceState` now maintains a shared `_llm_info` list of `(span_name, model, system_prompt)` tuples; thread copies share the same list so all LLM spans contribute to the same summary.
+
 ## [1.0.5] - 2026-03-02
 
 ### Added
@@ -226,6 +241,7 @@ print(f"Success rate: {stats['success_rate']:.1%}")
 
 ## Version History
 
+- **1.5.2**: LLM trace summary and auto-versioning - send model/system_prompt/llm_steps on trace completion; system prompt extraction across OpenAI, Anthropic, Gemini, LangChain; Anthropic preserves system in payload
 - **1.0.5**: Expanded OpenAI integration - all major API surfaces (chat, completions, embeddings, images, audio, moderations, responses, beta threads) with streaming and token usage
 - **1.0.4**: Version check on init - warns when a newer SDK is available on PyPI
 - **1.0.3**: Payload size sanitization - span input/output capped at 100KB to avoid backend errors

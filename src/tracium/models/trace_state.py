@@ -14,6 +14,15 @@ if TYPE_CHECKING:
     from ..core.client import TraciumClient
 
 
+@dataclass(frozen=True, slots=True)
+class LLMTraceSummary:
+    """Aggregated LLM metadata for a completed trace."""
+
+    model: str | None = None
+    system_prompt: str | None = None
+    llm_steps: tuple[dict[str, Any], ...] | None = None
+
+
 @dataclass
 class TraceState:
     client: TraciumClient
@@ -34,6 +43,7 @@ class TraceState:
     version: str | None = None
     remote_started: bool = False
     has_spans: bool = False
+    _llm_info: list = field(default_factory=list, repr=False)
 
     def ensure_remote_started(self) -> None:
         """
@@ -91,7 +101,7 @@ class TraceState:
         Returns:
             A new TraceState with a fresh span_stack but sharing other attributes.
         """
-        return TraceState(
+        copy = TraceState(
             client=self.client,
             trace_id=self.trace_id,
             agent_name=self.agent_name,
@@ -111,3 +121,5 @@ class TraceState:
             remote_started=self.remote_started,
             has_spans=self.has_spans,
         )
+        copy._llm_info = self._llm_info
+        return copy
