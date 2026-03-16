@@ -74,6 +74,7 @@ def _extract_system_prompt(input_data: Any) -> str | None:
 
     return None
 
+
 logger = get_logger()
 
 
