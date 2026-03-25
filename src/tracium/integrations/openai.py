@@ -470,6 +470,10 @@ def _trace_openai_call(
     except Exception as e:
         logger.debug(f"OpenAI trace setup failed (continuing without tracing): {e}")
 
+    # Ensure streaming responses include token usage data.
+    if kwargs.get("stream") and "stream_options" not in kwargs:
+        kwargs["stream_options"] = {"include_usage": True}
+
     try:
         response = original_fn()
     except Exception as e:
@@ -554,6 +558,10 @@ async def _trace_openai_call_async(
             span_handle.record_input(input_payload)
     except Exception as e:
         logger.debug(f"OpenAI async trace setup failed (continuing without tracing): {e}")
+
+    # Ensure streaming responses include token usage data.
+    if kwargs.get("stream") and "stream_options" not in kwargs:
+        kwargs["stream_options"] = {"include_usage": True}
 
     try:
         response = await original_fn()
@@ -648,7 +656,14 @@ def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | N
         if cached_tokens is None:
             cached_tokens = usage_dict.get("cached_input_tokens")
 
-        return _safe_int(prompt_tokens), _safe_int(completion_tokens), _safe_int(cached_tokens)
+        # OpenAI includes cached tokens in prompt_tokens. Subtract them so
+        # input_tokens means "non-cached input" (matching Anthropic semantics).
+        safe_prompt = _safe_int(prompt_tokens)
+        safe_cached = _safe_int(cached_tokens)
+        if safe_prompt is not None and safe_cached is not None:
+            safe_prompt = max(safe_prompt - safe_cached, 0)
+
+        return safe_prompt, _safe_int(completion_tokens), safe_cached
     except Exception:
         return None, None, None
 

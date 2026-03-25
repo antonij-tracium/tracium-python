@@ -224,9 +224,11 @@ class AgentTraceHandle:
             self._state.ended_at = _utcnow()
             self._state.duration_ms = _duration_ms(self._state.started_at, self._state.ended_at)
 
+            llm_summary = _combine_llm_info(self._state._llm_info)
             payload = self._state.client.fail_agent_trace(
                 self._state.trace_id,
                 error=error,
+                llm_summary=llm_summary,
             )
             self._state.finished = True
             return (
@@ -551,9 +553,11 @@ class AgentTraceManager(
 
             if state.status == "failed":
                 if state.remote_started:
+                    llm_summary = _combine_llm_info(state._llm_info)
                     self._client.fail_agent_trace(
                         state.trace_id,
                         error=state.error,
+                        llm_summary=llm_summary,
                     )
             else:
                 if state.remote_started:

@@ -246,6 +246,7 @@ class TraciumAPIEndpoints:
         *,
         error: str | None = None,
         metadata: dict[str, Any] | None = None,
+        llm_summary: LLMTraceSummary | None = None,
     ) -> dict[str, Any]:
         """Mark an agent trace as failed asynchronously."""
         try:
@@ -259,6 +260,13 @@ class TraciumAPIEndpoints:
             payload: dict[str, Any] = {}
             if validated_error:
                 payload["error"] = validated_error
+            if llm_summary is not None:
+                if llm_summary.model is not None:
+                    payload["model"] = str(llm_summary.model)[:255]
+                if llm_summary.system_prompt is not None:
+                    payload["system_prompt"] = str(llm_summary.system_prompt)[:10000]
+                if llm_summary.llm_steps:
+                    payload["llm_steps"] = list(llm_summary.llm_steps)
 
             logger.debug("Failing agent trace", extra={"trace_id": validated_trace_id})
 
