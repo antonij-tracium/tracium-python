@@ -27,7 +27,10 @@ def _make_state(client, *, llm_info=None):
 class TestFailSendsLLMSummary:
     def test_fail_sends_llm_summary(self):
         mock_client = MagicMock()
-        mock_client.fail_agent_trace.return_value = {"trace_id": "test-trace-id", "status": "failed"}
+        mock_client.fail_agent_trace.return_value = {
+            "trace_id": "test-trace-id",
+            "status": "failed",
+        }
         llm_info = [("step1", "gpt-4", "Be helpful")]
         state = _make_state(mock_client, llm_info=llm_info)
         handle = AgentTraceHandle(state)
@@ -44,7 +47,10 @@ class TestFailSendsLLMSummary:
 
     def test_fail_sends_none_llm_summary_when_no_llm_info(self):
         mock_client = MagicMock()
-        mock_client.fail_agent_trace.return_value = {"trace_id": "test-trace-id", "status": "failed"}
+        mock_client.fail_agent_trace.return_value = {
+            "trace_id": "test-trace-id",
+            "status": "failed",
+        }
         state = _make_state(mock_client)
         handle = AgentTraceHandle(state)
 
@@ -56,7 +62,10 @@ class TestFailSendsLLMSummary:
     def test_context_manager_exit_with_exception_sends_llm_summary(self):
         mock_client = MagicMock()
         mock_client.start_agent_trace.return_value = {"id": "test-trace-id"}
-        mock_client.fail_agent_trace.return_value = {"trace_id": "test-trace-id", "status": "failed"}
+        mock_client.fail_agent_trace.return_value = {
+            "trace_id": "test-trace-id",
+            "status": "failed",
+        }
 
         manager = AgentTraceManager(
             mock_client,
@@ -83,7 +92,10 @@ class TestFailSendsLLMSummary:
 
     def test_fail_with_multi_step_llm_info(self):
         mock_client = MagicMock()
-        mock_client.fail_agent_trace.return_value = {"trace_id": "test-trace-id", "status": "failed"}
+        mock_client.fail_agent_trace.return_value = {
+            "trace_id": "test-trace-id",
+            "status": "failed",
+        }
         llm_info = [
             ("planner", "gpt-4", "Plan tasks"),
             ("executor", "claude-3", "Execute tasks"),
