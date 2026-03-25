@@ -94,7 +94,7 @@ def register_fastapi_response_hook() -> None:
             from starlette.applications import Starlette
 
             if not hasattr(Starlette, "_tracium_exception_patched"):
-                original_exception_handler = Starlette.exception_handler
+                original_exception_handler = getattr(Starlette, "exception_handler")
 
                 def patched_exception_handler(self, exc_class_or_status_code, handler=None):
                     if handler is None:
@@ -104,7 +104,7 @@ def register_fastapi_response_hook() -> None:
                         close_web_trace_on_request_completion(error=exc)
                         return await handler(request, exc)
 
-                    return original_exception_handler(  # type: ignore[call-arg]
+                    return original_exception_handler(
                         self, exc_class_or_status_code, wrapped_handler
                     )
 

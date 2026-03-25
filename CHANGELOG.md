@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-03-25
+
+### Fixed
+
+- **OpenAI cached token accounting**: OpenAI includes cached tokens within `prompt_tokens`. The SDK now subtracts cached tokens from the prompt total so that `input_tokens` represents non-cached input only, matching Anthropic semantics and giving accurate cost breakdowns.
+
+### Added
+
+- **Automatic `stream_options` for OpenAI streaming**: Streaming OpenAI calls now automatically include `{"include_usage": true}` in `stream_options` (when not already set) so token usage data is always captured, even if the caller didn't opt in.
+- **LLM summary on failed traces**: `fail_agent_trace` now sends the `llm_summary` (model, system prompt, and LLM steps) to the backend, just like successful trace completions. This ensures auto-versioning data is preserved even when a trace fails.
+
 ## [1.5.2] - 2026-03-16
 
 ### Added
@@ -241,6 +252,7 @@ print(f"Success rate: {stats['success_rate']:.1%}")
 
 ## Version History
 
+- **1.5.3**: Fix OpenAI cached token accounting, auto-include stream_options for token usage, send LLM summary on failed traces
 - **1.5.2**: LLM trace summary and auto-versioning - send model/system_prompt/llm_steps on trace completion; system prompt extraction across OpenAI, Anthropic, Gemini, LangChain; Anthropic preserves system in payload
 - **1.0.5**: Expanded OpenAI integration - all major API surfaces (chat, completions, embeddings, images, audio, moderations, responses, beta threads) with streaming and token usage
 - **1.0.4**: Version check on init - warns when a newer SDK is available on PyPI
