@@ -1,8 +1,8 @@
 """Tests for trace handle fail() and _finish() sending llm_summary."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from tracium.models.trace_handle import AgentTraceHandle, AgentTraceManager, _combine_llm_info
+from tracium.models.trace_handle import AgentTraceHandle, AgentTraceManager
 from tracium.models.trace_state import TraceState
 
 
@@ -116,7 +116,7 @@ class TestFailSendsLLMSummary:
         )
 
         try:
-            with manager as handle:
+            with manager:
                 # No spans recorded, remote_started=False
                 raise RuntimeError("early failure")
         except RuntimeError:

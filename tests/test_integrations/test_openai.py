@@ -1,6 +1,5 @@
 """Tests for OpenAI integration helpers."""
 
-import pytest
 
 from tracium.integrations.openai import _extract_token_usage
 
