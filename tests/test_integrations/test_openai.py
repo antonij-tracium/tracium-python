@@ -30,7 +30,7 @@ class TestExtractTokenUsage:
             {
                 "prompt_tokens": 10_000,
                 "completion_tokens": 5_000,
-                "prompt_token_details": {"cached_tokens": 3_000},
+                "prompt_tokens_details": {"cached_tokens": 3_000},
             }
         )
         inp, out, cached = _extract_token_usage(_FakeResponse(usage))
@@ -43,7 +43,7 @@ class TestExtractTokenUsage:
             {
                 "prompt_tokens": 10_000,
                 "completion_tokens": 5_000,
-                "prompt_token_details": {"cached_tokens": 0},
+                "prompt_tokens_details": {"cached_tokens": 0},
             }
         )
         inp, out, cached = _extract_token_usage(_FakeResponse(usage))
@@ -70,7 +70,7 @@ class TestExtractTokenUsage:
             {
                 "prompt_tokens": 1_000,
                 "completion_tokens": 500,
-                "prompt_token_details": {"cached_tokens": 2_000},
+                "prompt_tokens_details": {"cached_tokens": 2_000},
             }
         )
         inp, out, cached = _extract_token_usage(_FakeResponse(usage))
