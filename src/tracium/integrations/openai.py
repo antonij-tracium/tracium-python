@@ -634,6 +634,7 @@ def _safe_int(val: Any) -> int | None:
 
 
 def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | None]:
+
     try:
         usage = getattr(response, "usage", None)
         if not usage:
@@ -650,14 +651,12 @@ def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | N
                 prompt_tokens = total
 
         cached_tokens = None
-        for key in ("prompt_token_details", "completion_token_details"):
+        for key in ("prompt_tokens_details", "completion_tokens_details"):
             if cached_tokens is None and isinstance(usage_dict.get(key), dict):
                 cached_tokens = usage_dict[key].get("cached_tokens")
         if cached_tokens is None:
             cached_tokens = usage_dict.get("cached_input_tokens")
 
-        # OpenAI includes cached tokens in prompt_tokens. Subtract them so
-        # input_tokens means "non-cached input" (matching Anthropic semantics).
         safe_prompt = _safe_int(prompt_tokens)
         safe_cached = _safe_int(cached_tokens)
         if safe_prompt is not None and safe_cached is not None:
