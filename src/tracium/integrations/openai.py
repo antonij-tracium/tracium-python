@@ -413,6 +413,12 @@ def _finalize_response(
     output: Any,
 ) -> None:
     tokens = _extract_token_usage(response)
+    response_status = getattr(response, "status", None)
+    if bool(getattr(response, "thread_id", None)) and response_status in _PENDING_RUN_STATUSES:
+        try:
+            span_handle.set_status(str(response_status))
+        except Exception:
+            pass
     if any(tokens):
         span_handle.set_token_usage(
             input_tokens=tokens[0], output_tokens=tokens[1], cached_input_tokens=tokens[2]
