@@ -836,7 +836,6 @@ if BaseCallbackHandler is not None:
                                 metadata["total_tokens"] = token_usage["total_tokens"]
             except Exception:
                 pass
-
             return metadata
 
         def on_llm_end(
