@@ -12,6 +12,7 @@ Tracing errors will never break user applications.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import threading
 import time
 from datetime import datetime, timezone
@@ -302,11 +303,22 @@ def patch_openai(client: TraciumClient) -> None:
         for module_path, sync_cls, async_cls, method in _ENDPOINTS:
             try:
                 ns = openai_module.resources
-                for part in module_path.removeprefix("resources.").split("."):
-                    ns = getattr(ns, part)
+                relative_parts = module_path.removeprefix("resources.").split(".")
+                for i, part in enumerate(relative_parts):
+                    try:
+                        ns = getattr(ns, part)
+                    except AttributeError:
+                        # Some submodules (e.g. responses) are not re-exported from
+                        # openai.resources.__init__ but are importable directly.
+                        # relative_parts has "resources." stripped, so re-add it.
+                        full_module = "openai.resources." + ".".join(relative_parts[: i + 1])
+                        ns = importlib.import_module(full_module)
+                        for remaining in relative_parts[i + 1 :]:
+                            ns = getattr(ns, remaining)
+                        break
                 _patch_method(getattr(ns, sync_cls), method, False)
                 _patch_method(getattr(ns, async_cls), method, True)
-            except (AttributeError, Exception):
+            except Exception:
                 pass
     elif hasattr(openai_module, "ChatCompletion"):
         _patch_method(openai_module.ChatCompletion, "create", False)
@@ -657,7 +669,9 @@ def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | N
                 prompt_tokens = total
 
         cached_tokens = None
-        for key in ("prompt_tokens_details", "completion_tokens_details"):
+        # Chat Completions API: prompt_tokens_details.cached_tokens
+        # Responses API:        input_tokens_details.cached_tokens
+        for key in ("prompt_tokens_details", "input_tokens_details", "completion_tokens_details"):
             if cached_tokens is None and isinstance(usage_dict.get(key), dict):
                 cached_tokens = usage_dict[key].get("cached_tokens")
         if cached_tokens is None:
