@@ -1212,7 +1212,7 @@ if BaseCallbackHandler is not None:
             self.on_text(text, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
 
 else:
-    TraciumLangChainHandler = None  # type: ignore[misc]
+    TraciumLangChainHandler = None  # type: ignore
 
 
 def register_langchain_handler(client: TraciumClient) -> None:
