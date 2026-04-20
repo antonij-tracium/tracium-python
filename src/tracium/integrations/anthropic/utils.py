@@ -22,6 +22,27 @@ def normalize_messages(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[st
     return None
 
 
+def extract_tools(kwargs: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Extract tool definitions from Anthropic API call kwargs."""
+    try:
+        tools = kwargs.get("tools")
+        if not tools or not isinstance(tools, list):
+            return None
+        result = []
+        for tool in tools:
+            if isinstance(tool, dict):
+                result.append(tool)
+            elif hasattr(tool, "model_dump"):
+                result.append(tool.model_dump())
+            elif hasattr(tool, "dict"):
+                result.append(tool.dict())
+            else:
+                result.append({"raw": str(tool)})
+        return result or None
+    except Exception:
+        return None
+
+
 def extract_model(kwargs: dict[str, Any]) -> str | None:
     """Extract model from Anthropic API call."""
     model = kwargs.get("model")
@@ -42,6 +63,31 @@ def extract_usage(usage: Any) -> tuple[int | None, int | None]:
     return None, None
 
 
+def extract_tool_calls(response: Any) -> list[dict[str, Any]] | None:
+    """Extract tool_use content blocks from an Anthropic response."""
+    try:
+        if not (hasattr(response, "content") and isinstance(response.content, list)):
+            return None
+        calls = []
+        for block in response.content:
+            block_type = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+            if block_type == "tool_use":
+                if hasattr(block, "model_dump"):
+                    calls.append(block.model_dump())
+                elif isinstance(block, dict):
+                    calls.append(block)
+                else:
+                    entry: dict[str, Any] = {"type": "tool_use"}
+                    for attr in ("id", "name", "input"):
+                        val = getattr(block, attr, None)
+                        if val is not None:
+                            entry[attr] = val
+                    calls.append(entry)
+        return calls or None
+    except Exception:
+        return None
+
+
 def extract_output_data(response: Any) -> Any:
     """Extract output data from Anthropic response."""
     try:
@@ -54,6 +100,10 @@ def extract_output_data(response: Any) -> Any:
                 ]
                 if text_parts:
                     return "\n".join(text_parts) if len(text_parts) > 1 else text_parts[0]
+                # Tool-only response: tool_calls are stored separately via set_tool_calls().
+                # Return None so output_text is left empty rather than storing the full
+                # message model_dump, which would be confusing to display.
+                return None
             elif isinstance(response.content, str):
                 return response.content
     except Exception:
