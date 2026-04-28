@@ -46,6 +46,12 @@ _ENDPOINTS: list[tuple[str, str, str, str]] = [
     ("resources.beta.threads.runs", "Runs", "AsyncRuns", "stream"),
 ]
 
+# Endpoints that support the stream_options parameter (Responses API does not).
+_STREAM_OPTIONS_ENDPOINTS: frozenset[str] = frozenset({
+    "resources.chat.completions",
+    "resources.completions",
+})
+
 _USAGE_ATTRS = (
     "prompt_tokens",
     "completion_tokens",
@@ -279,18 +285,29 @@ def patch_openai(client: TraciumClient) -> None:
     except Exception:
         pass
 
-    def _patch_method(namespace: Any, method_name: str, is_async: bool) -> None:
+    def _patch_method(namespace: Any, method_name: str, is_async: bool, module_path: str = "") -> None:
         try:
             original = getattr(namespace, method_name)
+            _supports_stream_options = module_path in _STREAM_OPTIONS_ENDPOINTS
             if is_async:
 
                 async def traced(*args: Any, **kwargs: Any) -> Any:
+                    try:
+                        if _supports_stream_options and kwargs.get("stream") and "stream_options" not in kwargs:
+                            kwargs["stream_options"] = {"include_usage": True}
+                    except Exception:
+                        pass  # Never let tracing logic break user code
                     return await _trace_openai_call_async(
                         client, lambda: original(*args, **kwargs), args, kwargs
                     )
             else:
 
                 def traced(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
+                    try:
+                        if _supports_stream_options and kwargs.get("stream") and "stream_options" not in kwargs:
+                            kwargs["stream_options"] = {"include_usage": True}
+                    except Exception:
+                        pass  # Never let tracing logic break user code
                     return _trace_openai_call(
                         client, lambda: original(*args, **kwargs), args, kwargs
                     )
@@ -316,8 +333,8 @@ def patch_openai(client: TraciumClient) -> None:
                         for remaining in relative_parts[i + 1 :]:
                             ns = getattr(ns, remaining)
                         break
-                _patch_method(getattr(ns, sync_cls), method, False)
-                _patch_method(getattr(ns, async_cls), method, True)
+                _patch_method(getattr(ns, sync_cls), method, False, module_path)
+                _patch_method(getattr(ns, async_cls), method, True, module_path)
             except Exception:
                 pass
     elif hasattr(openai_module, "ChatCompletion"):
@@ -488,10 +505,6 @@ def _trace_openai_call(
     except Exception as e:
         logger.debug(f"OpenAI trace setup failed (continuing without tracing): {e}")
 
-    # Ensure streaming responses include token usage data.
-    if kwargs.get("stream") and "stream_options" not in kwargs:
-        kwargs["stream_options"] = {"include_usage": True}
-
     try:
         response = original_fn()
     except Exception as e:
@@ -576,10 +589,6 @@ async def _trace_openai_call_async(
             span_handle.record_input(input_payload)
     except Exception as e:
         logger.debug(f"OpenAI async trace setup failed (continuing without tracing): {e}")
-
-    # Ensure streaming responses include token usage data.
-    if kwargs.get("stream") and "stream_options" not in kwargs:
-        kwargs["stream_options"] = {"include_usage": True}
 
     try:
         response = await original_fn()
