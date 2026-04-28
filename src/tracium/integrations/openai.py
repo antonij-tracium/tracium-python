@@ -115,6 +115,9 @@ def _extract_chunk_tokens(chunk: Any) -> tuple[int | None, int | None, int | Non
             return _extract_token_usage(chunk)
         if hasattr(chunk, "data") and hasattr(chunk.data, "usage") and chunk.data.usage:
             return _extract_token_usage(chunk.data)
+        # Responses API: usage arrives in the response.completed event as chunk.response.usage
+        if hasattr(chunk, "response") and hasattr(chunk.response, "usage") and chunk.response.usage:
+            return _extract_token_usage(chunk.response)
     except Exception:
         pass
     return None
