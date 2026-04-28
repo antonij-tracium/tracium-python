@@ -47,10 +47,12 @@ _ENDPOINTS: list[tuple[str, str, str, str]] = [
 ]
 
 # Endpoints that support the stream_options parameter (Responses API does not).
-_STREAM_OPTIONS_ENDPOINTS: frozenset[str] = frozenset({
-    "resources.chat.completions",
-    "resources.completions",
-})
+_STREAM_OPTIONS_ENDPOINTS: frozenset[str] = frozenset(
+    {
+        "resources.chat.completions",
+        "resources.completions",
+    }
+)
 
 _USAGE_ATTRS = (
     "prompt_tokens",
@@ -285,7 +287,9 @@ def patch_openai(client: TraciumClient) -> None:
     except Exception:
         pass
 
-    def _patch_method(namespace: Any, method_name: str, is_async: bool, module_path: str = "") -> None:
+    def _patch_method(
+        namespace: Any, method_name: str, is_async: bool, module_path: str = ""
+    ) -> None:
         try:
             original = getattr(namespace, method_name)
             _supports_stream_options = module_path in _STREAM_OPTIONS_ENDPOINTS
@@ -293,7 +297,11 @@ def patch_openai(client: TraciumClient) -> None:
 
                 async def traced(*args: Any, **kwargs: Any) -> Any:
                     try:
-                        if _supports_stream_options and kwargs.get("stream") and "stream_options" not in kwargs:
+                        if (
+                            _supports_stream_options
+                            and kwargs.get("stream")
+                            and "stream_options" not in kwargs
+                        ):
                             kwargs["stream_options"] = {"include_usage": True}
                     except Exception:
                         pass  # Never let tracing logic break user code
@@ -304,7 +312,11 @@ def patch_openai(client: TraciumClient) -> None:
 
                 def traced(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
                     try:
-                        if _supports_stream_options and kwargs.get("stream") and "stream_options" not in kwargs:
+                        if (
+                            _supports_stream_options
+                            and kwargs.get("stream")
+                            and "stream_options" not in kwargs
+                        ):
                             kwargs["stream_options"] = {"include_usage": True}
                     except Exception:
                         pass  # Never let tracing logic break user code
@@ -661,7 +673,6 @@ def _safe_int(val: Any) -> int | None:
 
 
 def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | None]:
-
     try:
         usage = getattr(response, "usage", None)
         if not usage:
