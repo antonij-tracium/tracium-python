@@ -164,6 +164,18 @@ class AgentSpanHandle:
             except Exception:
                 pass
 
+    def set_tools(self, tools: list[dict[str, Any]]) -> None:
+        try:
+            self._context.set_tools(tools)
+        except Exception:
+            pass
+
+    def set_tool_calls(self, tool_calls: list[dict[str, Any]]) -> None:
+        try:
+            self._context.set_tool_calls(tool_calls)
+        except Exception:
+            pass
+
     def set_status(self, status: str) -> None:
         try:
             self._context.set_status(status)
@@ -229,6 +241,8 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
         self._input_tokens = input_tokens
         self._output_tokens = output_tokens
         self._cached_input_tokens = cached_input_tokens
+        self._tools: list[dict[str, Any]] | None = None
+        self._tool_calls: list[dict[str, Any]] | None = None
         self._status = "in_progress"
         self._error: str | None = None
         self._start_time = _utcnow()
@@ -318,6 +332,10 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
 
             if self._input is not None:
                 initial_payload["input"] = sanitize_span_io(self._input)
+            if self._tools is not None:
+                initial_payload["tools"] = self._tools
+            if self._tool_calls is not None:
+                initial_payload["tool_calls"] = self._tool_calls
 
             skip_initial_send = self.span_type == "llm" and not (
                 self._model_id or self.state.model_id
@@ -375,6 +393,10 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
                 api_payload["input"] = sanitize_span_io(self._input)
             if self._output is not None:
                 api_payload["output"] = sanitize_span_io(self._output)
+            if self._tools is not None:
+                api_payload["tools"] = self._tools
+            if self._tool_calls is not None:
+                api_payload["tool_calls"] = self._tool_calls
             if self._error:
                 api_payload["error"] = self._error
             if latency_ms is not None:
@@ -498,6 +520,20 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
         except Exception:
             self._status = "failed"
             self._error = str(error)[:10000] if error else "Unknown error"
+
+    def set_tools(self, tools: list[dict[str, Any]]) -> None:
+        if tools:
+            self._tools = tools
+
+    def set_tool_calls(self, tool_calls: list[dict[str, Any]]) -> None:
+        if tool_calls:
+            self._tool_calls = tool_calls
+            try:
+                from ..utils.tool_call_registry import register_tool_calls
+
+                register_tool_calls(self.state.trace_id, self.span_id, tool_calls)
+            except Exception:
+                pass
 
     def set_status(self, status: str) -> None:
         self._status = status

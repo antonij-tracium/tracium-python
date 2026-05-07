@@ -304,6 +304,43 @@ class AgentTraceHandle:
                 model_id=model_id,
             )
 
+    def tool_execution(
+        self,
+        name: str,
+        *,
+        tool_call_id: str | None = None,
+        input: Any | None = None,
+    ) -> AgentSpanContext:
+        """
+        Context manager for recording a tool execution as a child of the active LLM span.
+
+        Usage::
+
+            with tracer.tool_execution("get_weather", input={"location": "SF"}) as span:
+                result = get_weather("SF")
+                span.record_output(result)
+        """
+        try:
+            parent_span_id = self._state.current_parent_span_id
+            ctx = self.span(
+                span_type="tool",
+                name=name,
+                input=input,
+                parent_span_id=parent_span_id,
+            )
+            if tool_call_id:
+                try:
+                    ctx._handle.set_tool_calls([])  # placeholder; actual id stored below
+                    ctx._tool_call_id = tool_call_id  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            return ctx
+        except Exception as e:
+            logger.debug(
+                f"tool_execution() creation failed (using fallback): {type(e).__name__}: {e}"
+            )
+            return self.span(span_type="tool", name=name, input=input)
+
     def record_span(
         self,
         *,

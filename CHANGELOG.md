@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.8] - 2026-05-07
+
+### Added
+
+- **Tool call tracking**: The SDK now links tool-use spans back to the LLM span that originated them. A new `tool_call_registry` tracks tool call IDs across Anthropic, OpenAI, and Responses API formats; spans that invoke tools register their IDs, and subsequent tool-result spans resolve the correct parent automatically.
+- **`extract_tool_calls` for Anthropic**: New utility that extracts `tool_use` content blocks from Anthropic responses, returning structured dicts with `id`, `name`, and `input` fields for use in span linking and tracing.
+- **Google Gemini tool tracking**: Tool call IDs from Gemini responses are now registered in the registry, enabling parent-span resolution for Gemini tool flows.
+
+### Fixed
+
+- **OpenAI Responses API patching**: Submodules not re-exported from `openai.resources.__init__` (e.g. `responses`) are now resolved via `importlib.import_module` as a fallback, so Responses API endpoints are always patched correctly.
+- **Responses API cached token extraction**: `input_tokens_details.cached_tokens` (Responses API) is now checked alongside `prompt_tokens_details.cached_tokens` (Chat Completions API), ensuring accurate cached token accounting for both API surfaces.
+
 ## [1.5.3] - 2026-03-25
 
 ### Fixed
@@ -252,6 +265,7 @@ print(f"Success rate: {stats['success_rate']:.1%}")
 
 ## Version History
 
+- **1.5.8**: Tool call tracking across Anthropic/OpenAI/Gemini, fix Responses API patching and cached token extraction
 - **1.5.3**: Fix OpenAI cached token accounting, auto-include stream_options for token usage, send LLM summary on failed traces
 - **1.5.2**: LLM trace summary and auto-versioning - send model/system_prompt/llm_steps on trace completion; system prompt extraction across OpenAI, Anthropic, Gemini, LangChain; Anthropic preserves system in payload
 - **1.0.5**: Expanded OpenAI integration - all major API surfaces (chat, completions, embeddings, images, audio, moderations, responses, beta threads) with streaming and token usage

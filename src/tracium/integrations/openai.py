@@ -109,6 +109,40 @@ def _extract_chunk_content(chunk: Any) -> str | None:
     return None
 
 
+def _extract_chunk_tool_calls(chunk: Any, accumulator: dict[int, dict[str, Any]]) -> None:
+    """Accumulate tool_call deltas from a streaming chunk into the accumulator dict keyed by index."""
+    try:
+        if not (hasattr(chunk, "choices") and chunk.choices):
+            return
+        delta = getattr(chunk.choices[0], "delta", None)
+        if not delta:
+            return
+        tool_calls = getattr(delta, "tool_calls", None)
+        if not tool_calls:
+            return
+        for tc in tool_calls:
+            idx = getattr(tc, "index", 0)
+            if idx not in accumulator:
+                accumulator[idx] = {
+                    "id": None,
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                }
+            entry = accumulator[idx]
+            if getattr(tc, "id", None):
+                entry["id"] = tc.id
+            if getattr(tc, "type", None):
+                entry["type"] = tc.type
+            fn = getattr(tc, "function", None)
+            if fn:
+                if getattr(fn, "name", None):
+                    entry["function"]["name"] = fn.name
+                if getattr(fn, "arguments", None) is not None:
+                    entry["function"]["arguments"] += fn.arguments
+    except Exception:
+        pass
+
+
 def _extract_chunk_tokens(chunk: Any) -> tuple[int | None, int | None, int | None] | None:
     try:
         if hasattr(chunk, "usage") and chunk.usage:
@@ -128,6 +162,7 @@ def _finalize_stream(
     span_context: Any,
     text_parts: list[str],
     tokens: tuple[int | None, int | None, int | None],
+    tool_calls_accumulator: dict[int, dict[str, Any]] | None = None,
 ) -> None:
     try:
         span_handle.record_output("".join(text_parts) or "(streaming response)")
@@ -137,6 +172,9 @@ def _finalize_stream(
                 output_tokens=tokens[1],
                 cached_input_tokens=tokens[2],
             )
+        if tool_calls_accumulator:
+            calls = [tool_calls_accumulator[k] for k in sorted(tool_calls_accumulator)]
+            span_handle.set_tool_calls(calls)
         span_context.__exit__(None, None, None)
     except Exception:
         pass
@@ -159,6 +197,7 @@ class _BaseStreamWrapper:
         self._span_context = span_context
         self._text_parts: list[str] = []
         self._tokens: tuple[int | None, int | None, int | None] = (None, None, None)
+        self._tool_calls_acc: dict[int, dict[str, Any]] = {}
         self._finalized = False
 
     def __getattr__(self, name: str) -> Any:
@@ -170,13 +209,20 @@ class _BaseStreamWrapper:
                 self._text_parts.append(content)
             if tokens := _extract_chunk_tokens(chunk):
                 self._tokens = tokens
+            _extract_chunk_tool_calls(chunk, self._tool_calls_acc)
         except Exception:
             pass
 
     def _finalize_if_needed(self) -> None:
         if not self._finalized:
             self._finalized = True
-            _finalize_stream(self._span_handle, self._span_context, self._text_parts, self._tokens)
+            _finalize_stream(
+                self._span_handle,
+                self._span_context,
+                self._text_parts,
+                self._tokens,
+                self._tool_calls_acc or None,
+            )
 
 
 class StreamWrapper(_BaseStreamWrapper):
@@ -227,6 +273,27 @@ class AsyncStreamWrapper(_BaseStreamWrapper):
         except StopAsyncIteration:
             self._finalize_if_needed()
             raise
+
+
+def _extract_tools(kwargs: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Extract tool definitions from API call kwargs, returning a lightweight summary."""
+    try:
+        tools = kwargs.get("tools")
+        if not tools or not isinstance(tools, list):
+            return None
+        result = []
+        for tool in tools:
+            if isinstance(tool, dict):
+                result.append(tool)
+            elif hasattr(tool, "model_dump"):
+                result.append(tool.model_dump())
+            elif hasattr(tool, "dict"):
+                result.append(tool.dict())
+            else:
+                result.append({"raw": str(tool)})
+        return result or None
+    except Exception:
+        return None
 
 
 def _normalize_input(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
@@ -430,10 +497,32 @@ def _setup_trace(
     parent_span_id, span_name = get_or_create_function_span(
         trace_handle, get_current_function_for_span()
     )
+
+    # If no hierarchy parent, check whether this call is a tool-result continuation
+    # and auto-link it to the LLM span that originally made those tool calls.
+    if parent_span_id is None and input_payload:
+        try:
+            from ..utils.tool_call_registry import find_parent_span_id
+
+            messages = (
+                input_payload
+                if isinstance(input_payload, list)
+                else (input_payload.get("messages", []) if isinstance(input_payload, dict) else [])
+            )
+            continuation_parent = find_parent_span_id(trace_handle.id, messages)
+            if continuation_parent:
+                parent_span_id = continuation_parent
+        except Exception:
+            pass
+
     span_context = trace_handle.span(
         span_type="llm", name=span_name, model_id=model_id, parent_span_id=parent_span_id
     )
     span_handle = span_context.__enter__()
+
+    tools = _extract_tools(kwargs)
+    if tools:
+        span_handle.set_tools(tools)
 
     return trace_handle, span_context, span_handle, input_payload, model_id
 
@@ -447,6 +536,54 @@ def _is_embedding_response(response: Any) -> bool:
     except Exception:
         pass
     return False
+
+
+def _extract_tool_calls(response: Any) -> list[dict[str, Any]] | None:
+    """Extract tool_calls from an OpenAI chat completion response."""
+    try:
+        if hasattr(response, "choices") and response.choices:
+            message = getattr(response.choices[0], "message", None)
+            if message and getattr(message, "tool_calls", None):
+                calls = []
+                for tc in message.tool_calls:
+                    if hasattr(tc, "model_dump"):
+                        calls.append(tc.model_dump())
+                    elif hasattr(tc, "dict"):
+                        calls.append(tc.dict())
+                    else:
+                        entry: dict[str, Any] = {}
+                        if hasattr(tc, "id"):
+                            entry["id"] = tc.id
+                        if hasattr(tc, "type"):
+                            entry["type"] = tc.type
+                        fn = getattr(tc, "function", None)
+                        if fn:
+                            entry["function"] = {
+                                "name": getattr(fn, "name", None),
+                                "arguments": getattr(fn, "arguments", None),
+                            }
+                        calls.append(entry)
+                return calls or None
+        if hasattr(response, "output") and isinstance(response.output, list):
+            calls = []
+            for item in response.output:
+                item_type = getattr(item, "type", None)
+                if item_type == "function_call":
+                    if hasattr(item, "model_dump"):
+                        calls.append(item.model_dump())
+                    else:
+                        calls.append(
+                            {
+                                "type": "function_call",
+                                "name": getattr(item, "name", None),
+                                "arguments": getattr(item, "arguments", None),
+                                "call_id": getattr(item, "call_id", None),
+                            }
+                        )
+            return calls or None
+    except Exception:
+        pass
+    return None
 
 
 def _finalize_response(
@@ -473,6 +610,10 @@ def _finalize_response(
     if response_model:
         if not model_id or _is_embedding_response(response):
             span_handle.set_model_id(response_model)
+
+    tool_calls = _extract_tool_calls(response)
+    if tool_calls:
+        span_handle.set_tool_calls(tool_calls)
 
     span_handle.record_output(output)
     span_context.__exit__(None, None, None)

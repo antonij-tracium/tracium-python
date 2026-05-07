@@ -17,6 +17,29 @@ from ..helpers.logging_config import get_logger
 logger = get_logger()
 
 
+def _extract_tools(kwargs: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Extract tool definitions from Google Gemini API call kwargs."""
+    try:
+        tools = kwargs.get("tools")
+        if not tools or not isinstance(tools, list):
+            return None
+        result = []
+        for tool in tools:
+            if isinstance(tool, dict):
+                result.append(tool)
+            elif hasattr(tool, "model_dump"):
+                result.append(tool.model_dump())
+            elif hasattr(tool, "to_dict"):
+                result.append(tool.to_dict())
+            elif hasattr(tool, "dict"):
+                result.append(tool.dict())
+            else:
+                result.append({"raw": str(tool)})
+        return result or None
+    except Exception:
+        return None
+
+
 def _normalize_prompt(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | dict[str, Any] | None:
     try:
         if "contents" in kwargs:
@@ -230,6 +253,10 @@ def _trace_google_call(
 
         if prompt_payload is not None:
             span_handle.record_input(prompt_payload)
+
+        tools = _extract_tools(kwargs)
+        if tools:
+            span_handle.set_tools(tools)
     except Exception as e:
         logger.debug(f"Google trace setup failed (continuing without tracing): {e}")
 
@@ -344,6 +371,10 @@ async def _trace_google_call_async(
 
         if prompt_payload is not None:
             span_handle.record_input(prompt_payload)
+
+        tools = _extract_tools(kwargs)
+        if tools:
+            span_handle.set_tools(tools)
     except Exception as e:
         logger.debug(f"Google async trace setup failed (continuing without tracing): {e}")
 

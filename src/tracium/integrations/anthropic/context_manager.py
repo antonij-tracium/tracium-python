@@ -14,8 +14,9 @@ from ...helpers.logging_config import get_logger
 from .stream_wrappers import (
     AsyncStreamWrapper,
     StreamWrapper,
+    _build_tool_calls,
 )
-from .utils import extract_model, normalize_messages
+from .utils import extract_model, extract_tools, normalize_messages
 
 logger = get_logger()
 
@@ -61,6 +62,10 @@ def _create_span_context(
         )
         span_handle.record_input(payload)
 
+    tools = extract_tools(kwargs)
+    if tools:
+        span_handle.set_tools(tools)
+
     return trace_handle, span_handle, span_context
 
 
@@ -100,6 +105,10 @@ class StreamContextManagerWrapper:
                         input_tokens=self._wrapped_stream._input_tokens,
                         output_tokens=self._wrapped_stream._output_tokens,
                     )
+
+                tool_calls = _build_tool_calls(self._wrapped_stream._tool_calls_acc)
+                if tool_calls:
+                    self._span_handle.set_tool_calls(tool_calls)
         except Exception:
             pass
 
@@ -162,6 +171,10 @@ class AsyncStreamContextManagerWrapper:
                         input_tokens=self._wrapped_stream._input_tokens,
                         output_tokens=self._wrapped_stream._output_tokens,
                     )
+
+                tool_calls = _build_tool_calls(self._wrapped_stream._tool_calls_acc)
+                if tool_calls:
+                    self._span_handle.set_tool_calls(tool_calls)
         except Exception:
             pass
 

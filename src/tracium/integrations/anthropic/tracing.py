@@ -13,7 +13,14 @@ from typing import Any
 from ...core.client import TraciumClient
 from ...helpers.logging_config import get_logger
 from .stream_wrappers import AsyncStreamWrapper, StreamWrapper
-from .utils import extract_model, extract_output_data, extract_usage, normalize_messages
+from .utils import (
+    extract_model,
+    extract_output_data,
+    extract_tool_calls,
+    extract_tools,
+    extract_usage,
+    normalize_messages,
+)
 
 logger = get_logger()
 
@@ -43,6 +50,21 @@ def _create_trace_and_span(
     basic_span_name = get_current_function_for_span()
     parent_span_id, span_name = get_or_create_function_span(trace_handle, basic_span_name)
 
+    # If no hierarchy parent, check whether this call is a tool-result continuation
+    # and auto-link it to the LLM span that originally made those tool calls.
+    if parent_span_id is None and messages_payload:
+        try:
+            from ...utils.tool_call_registry import find_parent_span_id
+
+            continuation_parent = find_parent_span_id(
+                trace_handle.id,
+                messages_payload.get("messages", []),
+            )
+            if continuation_parent:
+                parent_span_id = continuation_parent
+        except Exception:
+            pass
+
     span_context = trace_handle.span(
         span_type="llm",
         name=span_name,
@@ -53,6 +75,10 @@ def _create_trace_and_span(
 
     if messages_payload is not None:
         span_handle.record_input(messages_payload)
+
+    tools = extract_tools(kwargs)
+    if tools:
+        span_handle.set_tools(tools)
 
     return trace_handle, span_handle, span_context
 
@@ -138,6 +164,10 @@ def trace_anthropic_call(
             if input_tokens is not None or output_tokens is not None:
                 span_handle.set_token_usage(input_tokens=input_tokens, output_tokens=output_tokens)
 
+            tool_calls = extract_tool_calls(response)
+            if tool_calls:
+                span_handle.set_tool_calls(tool_calls)
+
             span_handle.record_output(extract_output_data(response))
             span_context.__exit__(None, None, None)
 
@@ -194,6 +224,10 @@ async def trace_anthropic_call_async(
             input_tokens, output_tokens = extract_usage(getattr(response, "usage", None))
             if input_tokens is not None or output_tokens is not None:
                 span_handle.set_token_usage(input_tokens=input_tokens, output_tokens=output_tokens)
+
+            tool_calls = extract_tool_calls(response)
+            if tool_calls:
+                span_handle.set_tool_calls(tool_calls)
 
             span_handle.record_output(extract_output_data(response))
             span_context.__exit__(None, None, None)
