@@ -530,6 +530,7 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
             self._tool_calls = tool_calls
             try:
                 from ..utils.tool_call_registry import register_tool_calls
+
                 register_tool_calls(self.state.trace_id, self.span_id, tool_calls)
             except Exception:
                 pass

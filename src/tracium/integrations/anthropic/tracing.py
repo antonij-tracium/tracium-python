@@ -55,6 +55,7 @@ def _create_trace_and_span(
     if parent_span_id is None and messages_payload:
         try:
             from ...utils.tool_call_registry import find_parent_span_id
+
             continuation_parent = find_parent_span_id(
                 trace_handle.id,
                 messages_payload.get("messages", []),

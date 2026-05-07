@@ -115,7 +115,11 @@ def _extract_chunk_tool_calls(chunk: Any, accumulator: dict[int, dict[str, Any]]
         for tc in tool_calls:
             idx = getattr(tc, "index", 0)
             if idx not in accumulator:
-                accumulator[idx] = {"id": None, "type": "function", "function": {"name": "", "arguments": ""}}
+                accumulator[idx] = {
+                    "id": None,
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                }
             entry = accumulator[idx]
             if getattr(tc, "id", None):
                 entry["id"] = tc.id
@@ -202,7 +206,10 @@ class _BaseStreamWrapper:
         if not self._finalized:
             self._finalized = True
             _finalize_stream(
-                self._span_handle, self._span_context, self._text_parts, self._tokens,
+                self._span_handle,
+                self._span_context,
+                self._text_parts,
+                self._tokens,
                 self._tool_calls_acc or None,
             )
 
@@ -464,8 +471,11 @@ def _setup_trace(
     if parent_span_id is None and input_payload:
         try:
             from ..utils.tool_call_registry import find_parent_span_id
-            messages = input_payload if isinstance(input_payload, list) else (
-                input_payload.get("messages", []) if isinstance(input_payload, dict) else []
+
+            messages = (
+                input_payload
+                if isinstance(input_payload, list)
+                else (input_payload.get("messages", []) if isinstance(input_payload, dict) else [])
             )
             continuation_parent = find_parent_span_id(trace_handle.id, messages)
             if continuation_parent:
@@ -530,12 +540,14 @@ def _extract_tool_calls(response: Any) -> list[dict[str, Any]] | None:
                     if hasattr(item, "model_dump"):
                         calls.append(item.model_dump())
                     else:
-                        calls.append({
-                            "type": "function_call",
-                            "name": getattr(item, "name", None),
-                            "arguments": getattr(item, "arguments", None),
-                            "call_id": getattr(item, "call_id", None),
-                        })
+                        calls.append(
+                            {
+                                "type": "function_call",
+                                "name": getattr(item, "name", None),
+                                "arguments": getattr(item, "arguments", None),
+                                "call_id": getattr(item, "call_id", None),
+                            }
+                        )
             return calls or None
     except Exception:
         pass
@@ -781,7 +793,6 @@ def _safe_int(val: Any) -> int | None:
 
 
 def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | None]:
-
     try:
         usage = getattr(response, "usage", None)
         if not usage:

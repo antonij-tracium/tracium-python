@@ -60,7 +60,9 @@ class TestExtractToolCalls:
         response = MagicMock()
         response.content = [block]
         calls = extract_tool_calls(response)
-        assert calls == [{"type": "tool_use", "id": "toolu_abc", "name": "get_weather", "input": {"city": "SF"}}]
+        assert calls == [
+            {"type": "tool_use", "id": "toolu_abc", "name": "get_weather", "input": {"city": "SF"}}
+        ]
 
     def test_ignores_non_tool_use_blocks(self):
         text_block = MagicMock()

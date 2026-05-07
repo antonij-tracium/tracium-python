@@ -336,7 +336,9 @@ class AgentTraceHandle:
                     pass
             return ctx
         except Exception as e:
-            logger.debug(f"tool_execution() creation failed (using fallback): {type(e).__name__}: {e}")
+            logger.debug(
+                f"tool_execution() creation failed (using fallback): {type(e).__name__}: {e}"
+            )
             return self.span(span_type="tool", name=name, input=input)
 
     def record_span(

@@ -70,7 +70,9 @@ def extract_tool_calls(response: Any) -> list[dict[str, Any]] | None:
             return None
         calls = []
         for block in response.content:
-            block_type = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+            block_type = getattr(block, "type", None) or (
+                block.get("type") if isinstance(block, dict) else None
+            )
             if block_type == "tool_use":
                 if hasattr(block, "model_dump"):
                     calls.append(block.model_dump())

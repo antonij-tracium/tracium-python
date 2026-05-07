@@ -18,7 +18,9 @@ class TestRegisterAndLookup:
         messages = [
             {
                 "role": "user",
-                "content": [{"type": "tool_result", "tool_use_id": "toolu_abc", "content": "sunny"}],
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_abc", "content": "sunny"}
+                ],
             }
         ]
         assert find_parent_span_id("trace-1", messages) == "span-A"
@@ -28,7 +30,13 @@ class TestRegisterAndLookup:
         register_tool_calls(
             "trace-2",
             "span-B",
-            [{"id": "call_xyz", "type": "function", "function": {"name": "search", "arguments": "{}"}}],
+            [
+                {
+                    "id": "call_xyz",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                }
+            ],
         )
         messages = [{"role": "tool", "tool_call_id": "call_xyz", "content": "results"}]
         assert find_parent_span_id("trace-2", messages) == "span-B"
