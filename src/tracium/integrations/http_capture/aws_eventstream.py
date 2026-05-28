@@ -119,11 +119,21 @@ def iter_bedrock_events(buffer: bytes) -> Iterator[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 
+# Fixed-width AWS eventstream header value types. Booleans (0/1) carry no
+# payload; the rest occupy a fixed number of inline bytes. Knowing the width
+# lets us skip past unused header types without abandoning the rest of the
+# header block.
+_EVENTSTREAM_FIXED_WIDTH_TYPES = {0: 0, 1: 0, 2: 1, 3: 2, 4: 4, 5: 8, 8: 8, 9: 16}
+
+
 def _parse_headers(blob: bytes) -> dict[str, Any]:
     """Decode the headers section of an eventstream message.
 
-    We only handle the value types Bedrock actually uses (string, byte array);
-    others are skipped so an unknown type doesn't blow up the whole parse.
+    We decode the string/byte-array types Bedrock actually uses; for the
+    other AWS eventstream value types we know the on-wire length, so we
+    skip them rather than abandon the rest of the header block. Truly
+    unknown type bytes still break parsing (we can't tell how many bytes
+    they consume).
     """
     headers: dict[str, Any] = {}
     pos = 0
@@ -140,8 +150,8 @@ def _parse_headers(blob: bytes) -> dict[str, Any]:
             break
         value_type = blob[pos]
         pos += 1
-        # Type 7 = string (most common for Bedrock); type 6 = byte array.
         if value_type in (6, 7):
+            # String (7) and byte array (6) — 2-byte length prefix.
             if pos + 2 > len(blob):
                 break
             (value_len,) = struct.unpack(">H", blob[pos : pos + 2])
@@ -154,7 +164,13 @@ def _parse_headers(blob: bytes) -> dict[str, Any]:
                 headers[name] = value_bytes.decode("utf-8", errors="replace")
             else:
                 headers[name] = value_bytes
+        elif value_type in _EVENTSTREAM_FIXED_WIDTH_TYPES:
+            width = _EVENTSTREAM_FIXED_WIDTH_TYPES[value_type]
+            if pos + width > len(blob):
+                break
+            pos += width
         else:
-            # Unsupported type — give up on the rest of this header block.
+            # Truly unknown type — we can't infer its width, so we have to
+            # stop here rather than risk misaligning subsequent headers.
             break
     return headers

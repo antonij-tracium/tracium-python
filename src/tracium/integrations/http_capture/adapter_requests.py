@@ -81,6 +81,11 @@ def install() -> None:
         _emit_from_buffered(url, request_body, body, response.status_code, started_at)
         return response
 
+    import functools
+
+    functools.update_wrapper(patched_send, original_send)
+    patched_send._tracium_patched = True  # type: ignore[attr-defined]
+    patched_send.__wrapped__ = original_send  # type: ignore[attr-defined]
     setattr(requests.Session, "send", patched_send)
     _INSTALLED = True
     logger.info("tracium: http_capture installed for requests")

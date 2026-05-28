@@ -276,6 +276,52 @@ def _is_serverless() -> bool:
     )
 
 
+_AUTO_WRAP_FRAME_BLOCKLIST = (
+    "_pytest",
+    "pytest",
+    "pluggy",
+    "gunicorn",
+    "uvicorn",
+    "hypercorn",
+    "daphne",
+    "click",
+    "typer",
+    "celery",
+    "anyio",
+    "asyncio",
+    "importlib",
+    "runpy",
+)
+
+
+def _candidate_caller_frames(max_depth: int = 20) -> list[Any]:
+    """Walk up the stack collecting frames likely to belong to user code.
+
+    Frames whose ``__name__`` starts with a known third-party launcher
+    (pytest, gunicorn, uvicorn, click, …) or any ``tracium.*`` module are
+    skipped — we don't want to wrap an ``app``/``main`` defined inside one
+    of those frameworks.
+    """
+    import inspect
+
+    frame = inspect.currentframe()
+    if not frame:
+        return []
+
+    out: list[Any] = []
+    f = frame.f_back
+    depth = 0
+    while f is not None and depth < max_depth:
+        module_name = (f.f_globals.get("__name__") or "")
+        head = module_name.split(".", 1)[0]
+        is_tracium = module_name == "tracium" or module_name.startswith("tracium.")
+        if head not in _AUTO_WRAP_FRAME_BLOCKLIST and not is_tracium:
+            out.append(f)
+        f = f.f_back
+        depth += 1
+    return out
+
+
 def _auto_wrap_lambda_handler_in_caller() -> None:
     """If running in AWS Lambda (or similar FaaS where the runtime imports the
     user's handler by name), wrap it so that each invocation finalizes outstanding
@@ -283,27 +329,21 @@ def _auto_wrap_lambda_handler_in_caller() -> None:
     if not _is_serverless():
         return
 
-    import inspect
     import sys
 
-    frame = inspect.currentframe()
-    if not frame:
-        return
-
-    candidate_frames = []
-    f = frame.f_back
-    depth = 0
-    while f is not None and depth < 20:
-        candidate_frames.append(f)
-        f = f.f_back
-        depth += 1
-
-    for f in candidate_frames:
+    for f in _candidate_caller_frames():
         caller_globals = f.f_globals
         module_name = caller_globals.get("__name__")
         caller_module = sys.modules.get(module_name) if module_name else None
 
-        for name in ("lambda_handler", "handler", "main"):
+        # ``main`` is too generic to wrap from an arbitrary frame — restrict
+        # it to the program entry module so we don't wrap a helper called
+        # ``main`` that happens to live in caller scope.
+        names: tuple[str, ...] = ("lambda_handler", "handler")
+        if module_name == "__main__":
+            names = names + ("main",)
+
+        for name in names:
             if name not in caller_globals:
                 continue
             fn = caller_globals[name]
@@ -365,7 +405,10 @@ def _serverless_finalize() -> None:
         pass
     try:
         client = _get_client()
-        client.flush()
+        # Cap the flush so a hung backend can't delay the Lambda response.
+        # The cold/warm-path difference here matters: in serverless we'd
+        # rather skip emitting than block the user's request.
+        client.flush(timeout=5.0)
     except Exception:
         pass
 
@@ -374,7 +417,6 @@ def _auto_wrap_asgi_in_caller() -> None:
     """If a FastAPI / Starlette / Litestar app is in caller globals, wrap it
     with the Tracium ASGI middleware so request-scoped traces capture nested
     LLM spans."""
-    import inspect
     import sys
 
     try:
@@ -382,19 +424,7 @@ def _auto_wrap_asgi_in_caller() -> None:
     except Exception:
         return
 
-    frame = inspect.currentframe()
-    if not frame:
-        return
-
-    candidate_frames = []
-    f = frame.f_back
-    depth = 0
-    while f is not None and depth < 20:
-        candidate_frames.append(f)
-        f = f.f_back
-        depth += 1
-
-    for f in candidate_frames:
+    for f in _candidate_caller_frames():
         caller_globals = f.f_globals
         module_name = caller_globals.get("__name__")
         caller_module = sys.modules.get(module_name) if module_name else None
@@ -456,21 +486,10 @@ def _auto_wrap_wsgi_in_caller() -> None:
     import inspect
     import sys
 
-    frame = inspect.currentframe()
-    if not frame:
-        return
-
     # Walk up the stack so calling trace() from a helper (e.g. def setup(): tracium.trace())
-    # still finds the user's WSGI app in their module globals.
-    candidate_frames = []
-    f = frame.f_back
-    depth = 0
-    while f is not None and depth < 20:
-        candidate_frames.append(f)
-        f = f.f_back
-        depth += 1
-
-    for f in candidate_frames:
+    # still finds the user's WSGI app in their module globals. Third-party
+    # launcher frames (pytest, gunicorn, …) are skipped by the helper.
+    for f in _candidate_caller_frames():
         caller_globals = f.f_globals
         module_name = caller_globals.get("__name__")
         caller_module = sys.modules.get(module_name) if module_name else None

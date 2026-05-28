@@ -43,22 +43,21 @@ def install() -> None:
     with PATCH_LOCK:
         if _INSTALLED:
             return
-        try:
-            _check_green_thread_compat()
-        except Exception:
-            pass
-        try:
-            _patch_threading_thread()
-        except Exception:
-            pass
-        try:
-            _patch_thread_pool_executor()
-        except Exception:
-            pass
-        try:
-            install_asyncio_task_factory()
-        except Exception:
-            pass
+        for step in (
+            _check_green_thread_compat,
+            _patch_threading_thread,
+            _patch_thread_pool_executor,
+            install_asyncio_task_factory,
+        ):
+            try:
+                step()
+            except Exception as e:
+                logger.debug(
+                    "tracium thread-propagation step %s failed: %s: %s",
+                    step.__name__,
+                    type(e).__name__,
+                    e,
+                )
         _INSTALLED = True
 
 
@@ -215,9 +214,9 @@ def _patch_threading_thread() -> None:
 
         self.run = _run_in_context  # type: ignore[method-assign]
 
-    patched_init._tracium_patched = True  # type: ignore[attr-defined]
-
-    # Preserve signature for IDEs / debugpy.
+    # Preserve signature for IDEs / debugpy. ``update_wrapper`` copies
+    # attributes from the original, so set our marker AFTER it runs to
+    # ensure the marker isn't clobbered.
     try:
         import functools
         import inspect
@@ -227,6 +226,7 @@ def _patch_threading_thread() -> None:
     except Exception:
         pass
 
+    patched_init._tracium_patched = True  # type: ignore[attr-defined]
     threading.Thread.__init__ = patched_init  # type: ignore[method-assign]
 
 
@@ -250,8 +250,6 @@ def _patch_thread_pool_executor() -> None:
 
         return original_submit(self, _runner, *args, **kwargs)
 
-    patched_submit._tracium_patched = True  # type: ignore[attr-defined]
-
     try:
         import functools
 
@@ -259,4 +257,5 @@ def _patch_thread_pool_executor() -> None:
     except Exception:
         pass
 
+    patched_submit._tracium_patched = True  # type: ignore[attr-defined]
     cls.submit = patched_submit  # type: ignore[method-assign]

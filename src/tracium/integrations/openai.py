@@ -709,23 +709,17 @@ def _trace_openai_call(
                     trace_id = span_handle.trace_id
                     span_id = span_handle.id
                     if trace_id:
-                        thread = threading.Thread(
-                            target=_complete_assistant_run_sync,
-                            args=(
-                                oai,
-                                response.thread_id,
-                                response.id,
-                                trace_id,
-                                span_id,
-                                client,
-                            ),
-                            kwargs={
-                                "poll_interval_sec": _ASSISTANT_RUN_POLL_INTERVAL_SEC,
-                                "max_wait_sec": _ASSISTANT_RUN_MAX_WAIT_SEC,
-                            },
-                            daemon=True,
+                        _submit_assistant_poll(
+                            _complete_assistant_run_sync,
+                            oai,
+                            response.thread_id,
+                            response.id,
+                            trace_id,
+                            span_id,
+                            client,
+                            poll_interval_sec=_ASSISTANT_RUN_POLL_INTERVAL_SEC,
+                            max_wait_sec=_ASSISTANT_RUN_MAX_WAIT_SEC,
                         )
-                        thread.start()
     except Exception as e:
         logger.debug(f"OpenAI response tracing failed (ignored): {e}")
 
@@ -976,6 +970,30 @@ _PENDING_RUN_STATUSES = frozenset({"queued", "in_progress"})
 _PENDING_RUN_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "expired"})
 _ASSISTANT_RUN_POLL_INTERVAL_SEC = 2
 _ASSISTANT_RUN_MAX_WAIT_SEC = 300  # 5 minutes
+
+
+# Shared lazy executor for Assistant-run polling. Reused across all pending
+# runs in the process so we don't spawn one daemon thread per call (which
+# would accumulate during a chatty Assistants session and is the exact
+# pattern the user has flagged as debugpy-hostile). The executor is created
+# on first need and never explicitly torn down — workers are daemons so they
+# don't block interpreter exit, but at most a small fixed number exist.
+_assistant_poll_executor_lock = threading.Lock()
+_assistant_poll_executor: Any = None
+
+
+def _submit_assistant_poll(fn: Any, *args: Any, **kwargs: Any) -> None:
+    global _assistant_poll_executor
+    if _assistant_poll_executor is None:
+        with _assistant_poll_executor_lock:
+            if _assistant_poll_executor is None:
+                from concurrent.futures import ThreadPoolExecutor
+
+                _assistant_poll_executor = ThreadPoolExecutor(
+                    max_workers=4,
+                    thread_name_prefix="tracium-assistant-poll",
+                )
+    _assistant_poll_executor.submit(fn, *args, **kwargs)
 
 
 def _completed_at_from_run(run: Any) -> str:

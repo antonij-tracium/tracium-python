@@ -78,11 +78,21 @@ def test_raw_threading_thread_does_not_propagate(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Vanilla ``threading.Thread`` sees no trace; the one-time INFO is emitted."""
+    """When propagation is disabled, vanilla ``threading.Thread`` sees no trace
+    and the one-time INFO is emitted."""
     monkeypatch.setattr(tc, "_RAW_THREAD_WARNING_EMITTED", False)
     from tracium.helpers.global_state import STATE
 
     monkeypatch.setattr(STATE, "client", tracium_client)
+
+    # The thread_propagation auto-patch may already be installed by other tests
+    # in the session (it's process-global and has no uninstall). Restore the
+    # unpatched __init__ for the duration of this test so we actually exercise
+    # the "raw thread" code path.
+    init = threading.Thread.__init__
+    original_init = getattr(init, "__wrapped__", init)
+    if original_init is not init:
+        monkeypatch.setattr(threading.Thread, "__init__", original_init)
 
     captured: dict[str, object] = {}
 
@@ -109,6 +119,11 @@ def test_raw_thread_warning_fires_at_most_once(
     from tracium.helpers.global_state import STATE
 
     monkeypatch.setattr(STATE, "client", tracium_client)
+
+    init = threading.Thread.__init__
+    original_init = getattr(init, "__wrapped__", init)
+    if original_init is not init:
+        monkeypatch.setattr(threading.Thread, "__init__", original_init)
 
     def worker() -> None:
         current_trace()

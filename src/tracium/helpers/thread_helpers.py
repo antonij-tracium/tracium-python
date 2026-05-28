@@ -71,6 +71,43 @@ def with_context(func: Callable[..., T]) -> Callable[..., T]:
     return wrapper
 
 
+class _NoOpSpanHandle:
+    """Inert span handle returned by :class:`_NoOpTraceHandle.span`."""
+
+    id = ""
+    parent_span_id = None
+
+    def update(self, *args, **kwargs) -> None:
+        return None
+
+    def end(self, *args, **kwargs) -> None:
+        return None
+
+
+class _NoOpTraceHandle:
+    """Inert stand-in for :class:`AgentTraceHandle` yielded by
+    :func:`with_trace_context` when no Tracium client is configured.
+
+    Mirrors the public surface callers commonly touch (``span``, ``id``, etc.)
+    with no-ops so user code can stay written for the active-trace case.
+    """
+
+    id = ""
+    agent_name = "no-op"
+    tags: list[str] = []
+    summary = None
+
+    @contextlib.contextmanager
+    def span(self, *args, **kwargs) -> Iterator[_NoOpSpanHandle]:
+        yield _NoOpSpanHandle()
+
+    def update(self, *args, **kwargs) -> None:
+        return None
+
+    def end(self, *args, **kwargs) -> None:
+        return None
+
+
 def get_current_trace_context() -> dict | None:
     """
     Snapshot the active trace context into a plain dict suitable for sending
@@ -127,10 +164,12 @@ def with_trace_context(
     try:
         client = get_client()
     except Exception:
-        yield None
-        return
+        client = None
     if client is None:
-        yield None
+        # No client configured — yield an inert handle so callers that do
+        # ``with tracium.with_trace_context(...) as t: t.span(...)`` don't
+        # crash with AttributeError on None. All span operations no-op.
+        yield _NoOpTraceHandle()
         return
 
     state = TraceState(

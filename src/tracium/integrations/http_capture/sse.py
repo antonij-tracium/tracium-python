@@ -36,7 +36,10 @@ class SSEAccumulator:
     __slots__ = ("_buffer", "_text", "_tool_calls", "_usage", "_model", "_role", "_finish_reason")
 
     def __init__(self) -> None:
-        self._buffer: bytes = b""
+        # ``bytearray`` so ``extend`` is amortized O(1). With ``bytes`` the
+        # ``+=`` in :meth:`feed` is O(n) per chunk, which becomes O(n²) over a
+        # long Anthropic / OpenAI stream of hundreds of small deltas.
+        self._buffer: bytearray = bytearray()
         self._text: list[str] = []
         self._tool_calls: dict[int, dict[str, Any]] = {}
         self._usage: dict[str, Any] = {}
@@ -48,16 +51,20 @@ class SSEAccumulator:
         """Append bytes to the internal buffer and process complete events."""
         if not chunk:
             return
-        self._buffer += chunk
-        while b"\n" in self._buffer:
-            line, self._buffer = self._buffer.split(b"\n", 1)
+        self._buffer.extend(chunk)
+        while True:
+            nl = self._buffer.find(b"\n")
+            if nl < 0:
+                break
+            line = bytes(self._buffer[:nl])
+            del self._buffer[: nl + 1]
             self._handle_line(line.rstrip(b"\r"))
 
     def finalize(self) -> dict[str, Any]:
         """Return a non-streaming-shaped dict reconstructed from the chunks."""
         if self._buffer:
-            self._handle_line(self._buffer.rstrip(b"\r"))
-            self._buffer = b""
+            self._handle_line(bytes(self._buffer).rstrip(b"\r"))
+            self._buffer = bytearray()
 
         message: dict[str, Any] = {
             "role": self._role or "assistant",

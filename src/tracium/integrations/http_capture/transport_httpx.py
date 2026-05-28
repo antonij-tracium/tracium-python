@@ -48,11 +48,12 @@ def _looks_like_aws_eventstream(response: httpx.Response) -> bool:
     return ct.startswith(_AWS_EVENTSTREAM_CT)
 
 
-class _BedrockByteCollector:
+class _BytesAccumulator:
     """Trivial byte-buffer with the same ``.feed(bytes)`` interface as
-    :class:`SSEAccumulator`. AWS event-stream frames span chunk boundaries, so
-    we collect the whole body before decoding — much simpler than streaming
-    the framing parser, and LLM responses are bounded in size anyway.
+    :class:`SSEAccumulator`. Used for AWS event-stream framing (frames span
+    chunk boundaries, so we collect the whole body before decoding) and as a
+    generic tee target for non-streaming responses so we don't have to call
+    ``response.read()`` and defeat the caller's ``stream=True``.
     """
 
     __slots__ = ("_buf",)
@@ -62,10 +63,15 @@ class _BedrockByteCollector:
 
     def feed(self, chunk: bytes) -> None:
         if chunk:
-            self._buf += chunk
+            self._buf.extend(chunk)
 
     def get_bytes(self) -> bytes:
         return bytes(self._buf)
+
+
+# Back-compat alias for the (now-generic) collector — used by emit helpers
+# below and by tests that import the symbol directly.
+_BedrockByteCollector = _BytesAccumulator
 
 
 def _read_request_body(request: httpx.Request) -> bytes | None:
@@ -326,12 +332,26 @@ class TraciumHTTPXTransport(httpx.BaseTransport):
             )
             return response
 
-        # Non-streaming: read full body, re-attach for the caller.
-        try:
-            body = response.read()
-        except Exception:
-            body = None
-        _emit_from_buffered(url, request_body, body, response.status_code, started_at)
+        # Non-streaming branch. If httpx has already buffered the body (the
+        # common case — ``client.get()`` / ``client.post()`` read it before
+        # returning), parse directly. Otherwise tee the stream so callers
+        # using ``client.stream(...)`` on a non-SSE content-type still get
+        # real streaming semantics.
+        buffered = _peek_buffered_content(response)
+        if buffered is not None:
+            _emit_from_buffered(
+                url, request_body, buffered, response.status_code, started_at
+            )
+            return response
+
+        collector = _BytesAccumulator()
+        response.stream = _CapturingByteStream(
+            cast(httpx.SyncByteStream, response.stream),
+            collector,
+            on_close=lambda: _emit_from_buffered(
+                url, request_body, collector.get_bytes(), response.status_code, started_at
+            ),
+        )
         return response
 
     def close(self) -> None:
@@ -398,11 +418,24 @@ class TraciumAsyncHTTPXTransport(httpx.AsyncBaseTransport):
             )
             return response
 
-        try:
-            body = await response.aread()
-        except Exception:
-            body = None
-        _emit_from_buffered(url, request_body, body, response.status_code, started_at)
+        # Non-streaming branch (async). Same logic as the sync path: prefer
+        # the buffered body if httpx already has it, otherwise tee the stream
+        # so ``AsyncClient.stream(...)`` callers retain streaming semantics.
+        buffered = _peek_buffered_content(response)
+        if buffered is not None:
+            _emit_from_buffered(
+                url, request_body, buffered, response.status_code, started_at
+            )
+            return response
+
+        collector = _BytesAccumulator()
+        response.stream = _CapturingAsyncByteStream(
+            cast(httpx.AsyncByteStream, response.stream),
+            collector,
+            on_close=lambda: _emit_from_buffered(
+                url, request_body, collector.get_bytes(), response.status_code, started_at
+            ),
+        )
         return response
 
     async def aclose(self) -> None:

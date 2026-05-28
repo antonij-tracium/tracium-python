@@ -61,7 +61,11 @@ def _maybe_warn_raw_thread() -> None:
     _RAW_THREAD_WARNING_EMITTED = True
     logger.info(
         "tracium: current_trace() returned None inside a non-main thread. "
-        "Tracium no longer patches threading.Thread; spawn threads with "
-        "tracium.run_in_thread / tracium.ContextThread, or wrap targets with "
-        "tracium.with_context, to propagate trace context."
+        "Tracium auto-patches threading.Thread and ThreadPoolExecutor.submit "
+        "to propagate context, but this can be disabled via "
+        "TRACIUM_DISABLE_THREAD_PROPAGATION=1, and threads constructed before "
+        "tracium.init() / tracium.trace() are not patched. If you've disabled "
+        "propagation or are using a custom thread primitive, spawn threads "
+        "with tracium.run_in_thread / tracium.ContextThread, or wrap targets "
+        "with tracium.with_context."
     )

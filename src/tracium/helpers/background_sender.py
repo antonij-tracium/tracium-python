@@ -12,6 +12,7 @@ import os as _os
 import queue
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -103,8 +104,8 @@ class BackgroundSender:
         self._last_warning_time = 0.0
         # Trace IDs the backend has returned 404 for. Further span/complete/fail
         # POSTs to these traces would be wasted retries, so we drop them on
-        # enqueue and on dequeue. Bounded to avoid unbounded growth.
-        self._dead_trace_ids: set[str] = set()
+        # enqueue and on dequeue. FIFO-bounded so the cap evicts oldest first.
+        self._dead_trace_ids: OrderedDict[str, None] = OrderedDict()
         self._dead_trace_ids_max = 1024
 
         # Background thread is lazy-started on first enqueue, and self-terminates
@@ -176,17 +177,16 @@ class BackgroundSender:
 
     def _mark_trace_dead(self, trace_id: str) -> None:
         """Remember a trace_id the backend has 404'd. Subsequent POSTs to that
-        trace are dropped at enqueue time. Bounded to avoid unbounded growth."""
+        trace are dropped at enqueue time. FIFO-bounded — at the cap we evict
+        the oldest entry rather than an arbitrary one."""
         if trace_id in self._dead_trace_ids:
             return
         if len(self._dead_trace_ids) >= self._dead_trace_ids_max:
-            # Forget the oldest entry — set iteration order isn't FIFO but
-            # discarding any element keeps the cap honest.
             try:
-                self._dead_trace_ids.pop()
+                self._dead_trace_ids.popitem(last=False)
             except KeyError:
                 pass
-        self._dead_trace_ids.add(trace_id)
+        self._dead_trace_ids[trace_id] = None
         logger.debug("tracium: dropping further POSTs to trace %s (backend returned 404)", trace_id)
 
     def _process_request(self, request: QueuedRequest) -> None:
@@ -200,10 +200,16 @@ class BackgroundSender:
             if self._config.security_config:
                 is_allowed, wait_time = check_rate_limit(self._config.security_config)
                 if not is_allowed:
+                    # Sleeping here would stall every other queued request
+                    # behind this single rate-limited one. Telemetry is
+                    # best-effort, so drop the request and let downstream
+                    # backoff catch up naturally.
+                    self._total_dropped += 1
                     logger.debug(
-                        f"Rate limited, waiting {wait_time}s before request to {request.path}"
+                        f"Rate limited (retry-after {wait_time}s); dropping "
+                        f"{request.method.value} {request.path}"
                     )
-                    time.sleep(wait_time)
+                    return
 
             payload = None
             if request.json is not None and self._config.security_config:
