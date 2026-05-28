@@ -26,13 +26,14 @@ from .sse import SSEAccumulator
 logger = logging.getLogger(__name__)
 
 _INSTALLED = False
+_ORIGINAL_SEND: Any | None = None
 _STREAM_CONTENT_TYPES = ("text/event-stream", "application/x-ndjson")
 _AWS_EVENTSTREAM_CT = "application/vnd.amazon.eventstream"
 
 
 def install() -> None:
     """Monkey-patch :meth:`requests.Session.send`. Idempotent."""
-    global _INSTALLED
+    global _INSTALLED, _ORIGINAL_SEND
     if _INSTALLED:
         return
     try:
@@ -41,6 +42,7 @@ def install() -> None:
         return
 
     original_send = requests.Session.send
+    _ORIGINAL_SEND = original_send
 
     def patched_send(self: Any, request: Any, **kwargs: Any) -> Any:
         url = getattr(request, "url", "") or ""
@@ -89,6 +91,27 @@ def install() -> None:
     setattr(requests.Session, "send", patched_send)
     _INSTALLED = True
     logger.info("tracium: http_capture installed for requests")
+
+
+def uninstall() -> None:
+    """Reverse :func:`install` — restore the original ``requests.Session.send``.
+
+    Useful for test isolation. If ``requests`` isn't importable this is a
+    no-op; if the patch was never installed, also a no-op.
+    """
+    global _INSTALLED, _ORIGINAL_SEND
+    if not _INSTALLED:
+        return
+    try:
+        import requests  # type: ignore[import-untyped, unused-ignore]
+    except ImportError:
+        _INSTALLED = False
+        _ORIGINAL_SEND = None
+        return
+    if _ORIGINAL_SEND is not None:
+        setattr(requests.Session, "send", _ORIGINAL_SEND)
+    _ORIGINAL_SEND = None
+    _INSTALLED = False
 
 
 # --------------------------------------------------------------------------- #

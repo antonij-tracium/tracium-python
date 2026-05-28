@@ -472,14 +472,32 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
         except Exception as e:
             logger.debug(f"Span __exit__ failed (ignored): {type(e).__name__}: {e}")
         finally:
-            try:
-                if self._span_token is not None:
-                    from ..context.trace_context import CURRENT_SPAN
+            if self._span_token is not None:
+                from ..context.trace_context import CURRENT_SPAN
 
+                try:
                     CURRENT_SPAN.reset(self._span_token)
+                except (ValueError, LookupError) as e:
+                    # __enter__ and __exit__ ran in different Contexts (e.g.
+                    # across ``copy_context().run()`` or a task switch).
+                    # Reset would silently leak the span into surrounding
+                    # code; clear it if it still points to us.
+                    import logging as _logging
+
+                    _logging.getLogger(__name__).debug(
+                        "span __exit__: token reset failed (%s); "
+                        "clearing current span if it points to this span",
+                        type(e).__name__,
+                    )
+                    try:
+                        if CURRENT_SPAN.get(None) is self:
+                            CURRENT_SPAN.set(None)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                finally:
                     self._span_token = None
-            except Exception:
-                pass
 
     def set_input(self, input_data: Any) -> None:
         self._input = input_data

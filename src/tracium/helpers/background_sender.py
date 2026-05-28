@@ -410,8 +410,26 @@ class BackgroundSender:
             pass
 
     def _cleanup(self) -> None:
-        """Clean up resources on shutdown."""
+        """Clean up resources on shutdown.
+
+        We wait up to ``flush_timeout`` seconds for the queue to drain so
+        in-flight spans aren't lost. Only after that do we set the shutdown
+        flag and post the sentinel — items queued after the sentinel are
+        dropped by the worker, so the drain has to happen first.
+        """
         try:
+            start = time.monotonic()
+            deadline = start + self._flush_timeout
+            if (
+                not self._sync_mode
+                and self._worker_thread is not None
+                and self._worker_thread.is_alive()
+            ):
+                while time.monotonic() < deadline:
+                    if self._queue.empty():
+                        break
+                    time.sleep(0.05)
+
             self._shutdown.set()
 
             try:
@@ -420,7 +438,8 @@ class BackgroundSender:
                 pass
 
             if self._worker_thread and self._worker_thread.is_alive():
-                self._worker_thread.join(timeout=self._flush_timeout)
+                remaining = max(0.5, deadline - time.monotonic())
+                self._worker_thread.join(timeout=remaining)
 
         except Exception:
             pass

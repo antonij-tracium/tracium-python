@@ -54,16 +54,36 @@ class _BytesAccumulator:
     chunk boundaries, so we collect the whole body before decoding) and as a
     generic tee target for non-streaming responses so we don't have to call
     ``response.read()`` and defeat the caller's ``stream=True``.
+
+    Capped at ``TRACIUM_HTTP_CAPTURE_MAX_BYTES`` (default 1 MiB) so a
+    multi-MB response can't blow up the worker. Excess bytes are dropped;
+    parsers downstream see a truncated body.
     """
 
-    __slots__ = ("_buf",)
+    __slots__ = ("_buf", "_max_bytes", "_truncated")
 
     def __init__(self) -> None:
+        from .sse import _max_capture_bytes
+
         self._buf = bytearray()
+        self._max_bytes = _max_capture_bytes()
+        self._truncated = False
 
     def feed(self, chunk: bytes) -> None:
-        if chunk:
+        if not chunk:
+            return
+        if self._max_bytes <= 0:
             self._buf.extend(chunk)
+            return
+        remaining = self._max_bytes - len(self._buf)
+        if remaining <= 0:
+            self._truncated = True
+            return
+        if len(chunk) <= remaining:
+            self._buf.extend(chunk)
+        else:
+            self._buf.extend(chunk[:remaining])
+            self._truncated = True
 
     def get_bytes(self) -> bytes:
         return bytes(self._buf)
@@ -75,10 +95,23 @@ _BedrockByteCollector = _BytesAccumulator
 
 
 def _read_request_body(request: httpx.Request) -> bytes | None:
+    """Return the buffered request body without consuming a streaming body.
+
+    httpx populates ``request._content`` when the body was passed as bytes,
+    str, json, or data (the common case for LLM SDK calls). For requests built
+    from a lazy iterator / async iterator (``content=<iter>``), calling
+    ``request.read()`` would consume the iterator and break the actual HTTP
+    send. We only return the body when it's already materialized; otherwise we
+    capture the span without an input body rather than risk corrupting the
+    user's request.
+    """
     try:
-        return request.read()
+        content = getattr(request, "_content", None)
+        if isinstance(content, bytes | bytearray) and content:
+            return bytes(content)
     except Exception:
-        return None
+        pass
+    return None
 
 
 def _peek_buffered_content(response: httpx.Response) -> bytes | None:
@@ -448,6 +481,8 @@ class TraciumAsyncHTTPXTransport(httpx.AsyncBaseTransport):
 
 
 _INSTALLED = False
+_ORIGINAL_SYNC_INIT: Any | None = None
+_ORIGINAL_ASYNC_INIT: Any | None = None
 
 
 def install() -> None:
@@ -457,7 +492,7 @@ def install() -> None:
     Idempotent. Existing client instances created before ``install()`` are not
     affected — that's a small price for not retroactively touching live state.
     """
-    global _INSTALLED
+    global _INSTALLED, _ORIGINAL_SYNC_INIT, _ORIGINAL_ASYNC_INIT
     if _INSTALLED:
         return
 
@@ -486,11 +521,33 @@ def install() -> None:
     except (ValueError, TypeError):
         pass
 
+    _ORIGINAL_SYNC_INIT = orig_sync_init
+    _ORIGINAL_ASYNC_INIT = orig_async_init
     httpx.Client.__init__ = _patched_sync_init  # type: ignore[method-assign]
     httpx.AsyncClient.__init__ = _patched_async_init  # type: ignore[method-assign]
 
     _INSTALLED = True
     logger.info("tracium: http_capture installed for httpx (sync + async)")
+
+
+def uninstall() -> None:
+    """Reverse :func:`install`.
+
+    Restores the original :class:`httpx.Client` / :class:`httpx.AsyncClient`
+    constructors. Useful for test isolation and for users who want to
+    re-enable capture later. Already-constructed clients keep their wrapped
+    transports — we never reach back into live state.
+    """
+    global _INSTALLED, _ORIGINAL_SYNC_INIT, _ORIGINAL_ASYNC_INIT
+    if not _INSTALLED:
+        return
+    if _ORIGINAL_SYNC_INIT is not None:
+        httpx.Client.__init__ = _ORIGINAL_SYNC_INIT  # type: ignore[method-assign]
+    if _ORIGINAL_ASYNC_INIT is not None:
+        httpx.AsyncClient.__init__ = _ORIGINAL_ASYNC_INIT  # type: ignore[method-assign]
+    _ORIGINAL_SYNC_INIT = None
+    _ORIGINAL_ASYNC_INIT = None
+    _INSTALLED = False
 
 
 def _wrap_transports_sync(client: httpx.Client) -> None:

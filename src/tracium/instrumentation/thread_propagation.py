@@ -66,12 +66,19 @@ def install_asyncio_task_factory() -> None:
 
     Python 3.7+ ``asyncio.Task`` already copies context when none is supplied,
     so this is mostly a safety net for codebases or custom event-loop policies
-    that have installed a non-copying task factory. We:
+    that have installed a non-copying task factory. We patch every path that
+    production stacks (uvicorn, gunicorn, uvloop, custom policies) actually
+    use to construct loops:
 
-    1. Patch ``asyncio.new_event_loop`` so future loops get our factory.
-    2. If a loop is already running, install on it too.
+    1. ``asyncio.new_event_loop`` — module-level entry point.
+    2. ``DefaultEventLoopPolicy.new_event_loop`` — the path asyncio.run /
+       gunicorn / uvicorn reach via the active policy.
+    3. ``uvloop.new_event_loop`` and ``uvloop.EventLoopPolicy.new_event_loop``
+       if uvloop is loaded — its loops do not go through asyncio's module
+       function.
+    4. If a loop is already running, install on it directly.
 
-    Both steps are idempotent.
+    All steps are idempotent.
     """
     try:
         import asyncio
@@ -81,11 +88,81 @@ def install_asyncio_task_factory() -> None:
     _patch_asyncio_new_event_loop(asyncio)
 
     try:
+        _patch_policy_new_event_loop(asyncio.DefaultEventLoopPolicy)
+    except Exception:
+        pass
+
+    if "uvloop" in sys.modules:
+        try:
+            import uvloop
+
+            if hasattr(uvloop, "new_event_loop"):
+                _patch_module_new_event_loop(uvloop)
+            if hasattr(uvloop, "EventLoopPolicy"):
+                _patch_policy_new_event_loop(uvloop.EventLoopPolicy)
+        except Exception:
+            pass
+
+    try:
         loop = asyncio.get_running_loop()
     except Exception:
         loop = None
     if loop is not None:
         _install_factory_on_loop(loop)
+
+
+def _patch_module_new_event_loop(module: Any) -> None:
+    """Wrap ``module.new_event_loop`` so every loop it produces gets the
+    context-copying task factory. No-op if already patched."""
+    original = getattr(module, "new_event_loop", None)
+    if original is None or getattr(original, "_tracium_factory_patched", False):
+        return
+
+    def wrapper() -> Any:
+        loop = original()
+        try:
+            _install_factory_on_loop(loop)
+        except Exception:
+            pass
+        return loop
+
+    wrapper._tracium_factory_patched = True  # type: ignore[attr-defined]
+    try:
+        import functools
+
+        functools.update_wrapper(wrapper, original)
+    except Exception:
+        pass
+    module.new_event_loop = wrapper
+
+
+def _patch_policy_new_event_loop(policy_cls: Any) -> None:
+    """Wrap ``policy_cls.new_event_loop`` so loops created via the active
+    event-loop policy (the path uvicorn/gunicorn/asyncio.run actually use)
+    also get the task factory. No-op if already patched."""
+    original = getattr(policy_cls, "new_event_loop", None)
+    if original is None or getattr(original, "_tracium_factory_patched", False):
+        return
+
+    def wrapper(self: Any) -> Any:
+        loop = original(self)
+        try:
+            _install_factory_on_loop(loop)
+        except Exception:
+            pass
+        return loop
+
+    wrapper._tracium_factory_patched = True  # type: ignore[attr-defined]
+    try:
+        import functools
+
+        functools.update_wrapper(wrapper, original)
+    except Exception:
+        pass
+    try:
+        policy_cls.new_event_loop = wrapper
+    except (AttributeError, TypeError):
+        pass
 
 
 def _install_factory_on_loop(loop: Any) -> None:

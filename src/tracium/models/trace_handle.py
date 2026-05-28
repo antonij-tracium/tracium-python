@@ -658,13 +658,34 @@ class AgentTraceManager(
         try:
             self._finish(exc_type, exc_value, exc_tb)
         finally:
-            try:
-                if self._token is not None:
-                    from ..context.trace_context import CURRENT_TRACE_STATE
+            if self._token is not None:
+                from ..context.trace_context import CURRENT_TRACE_STATE
 
+                try:
                     CURRENT_TRACE_STATE.reset(self._token)
-            except Exception:
-                pass
+                except (ValueError, LookupError) as e:
+                    # Token was created in a different Context (e.g. __enter__
+                    # ran in the outer context but __exit__ ran inside a
+                    # ``contextvars.copy_context().run()`` or after an
+                    # asyncio task switch). Silently leaving the state set
+                    # would leak this trace into surrounding code. Clear it
+                    # if we still appear to be active here.
+                    import logging as _logging
+
+                    _logging.getLogger(__name__).debug(
+                        "trace __exit__: token reset failed (%s); "
+                        "clearing current state if it points to this trace",
+                        type(e).__name__,
+                    )
+                    try:
+                        if CURRENT_TRACE_STATE.get(None) is self._state:
+                            CURRENT_TRACE_STATE.set(None)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                finally:
+                    self._token = None
 
     async def __aexit__(
         self,

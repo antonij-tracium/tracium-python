@@ -31,6 +31,7 @@ _INSTALLED = False
 
 __all__ = [
     "install",
+    "uninstall",
     "is_installed",
     "owned_capture",
     "is_owned",
@@ -55,6 +56,21 @@ def install() -> None:
     except Exception as e:
         logger.debug("tracium: requests hook failed (continuing): %s: %s", type(e).__name__, e)
     _INSTALLED = True
+
+
+def uninstall() -> None:
+    """Reverse :func:`install` — restore httpx and requests to their original
+    state. Useful for test isolation."""
+    global _INSTALLED
+    try:
+        transport_httpx.uninstall()
+    except Exception as e:
+        logger.debug("tracium: httpx unhook failed (continuing): %s: %s", type(e).__name__, e)
+    try:
+        adapter_requests.uninstall()
+    except Exception as e:
+        logger.debug("tracium: requests unhook failed (continuing): %s: %s", type(e).__name__, e)
+    _INSTALLED = False
 
 
 def is_installed() -> bool:
