@@ -81,7 +81,7 @@ def install() -> None:
         _emit_from_buffered(url, request_body, body, response.status_code, started_at)
         return response
 
-    requests.Session.send = patched_send
+    setattr(requests.Session, "send", patched_send)
     _INSTALLED = True
     logger.info("tracium: http_capture installed for requests")
 
