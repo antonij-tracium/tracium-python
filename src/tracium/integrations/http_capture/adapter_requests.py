@@ -32,7 +32,7 @@ _AWS_EVENTSTREAM_CT = "application/vnd.amazon.eventstream"
 
 
 def install() -> None:
-    """Monkey-patch :meth:`requests.Session.send`. Idempotent."""
+    """Monkey-patch :meth:`requests.Session.send`. Idempotent and thread-safe."""
     global _INSTALLED, _ORIGINAL_SEND
     if _INSTALLED:
         return
@@ -41,8 +41,20 @@ def install() -> None:
     except ImportError:
         return
 
-    original_send = requests.Session.send
-    _ORIGINAL_SEND = original_send
+    from ...helpers.global_state import PATCH_LOCK
+
+    with PATCH_LOCK:
+        if _INSTALLED:
+            return
+
+        original_send = requests.Session.send
+        _ORIGINAL_SEND = original_send
+
+        _install_inner(requests, original_send)
+
+
+def _install_inner(requests: Any, original_send: Any) -> None:
+    global _INSTALLED
 
     def patched_send(self: Any, request: Any, **kwargs: Any) -> Any:
         url = getattr(request, "url", "") or ""
@@ -102,16 +114,22 @@ def uninstall() -> None:
     global _INSTALLED, _ORIGINAL_SEND
     if not _INSTALLED:
         return
-    try:
-        import requests  # type: ignore[import-untyped, unused-ignore]
-    except ImportError:
-        _INSTALLED = False
+
+    from ...helpers.global_state import PATCH_LOCK
+
+    with PATCH_LOCK:
+        if not _INSTALLED:
+            return
+        try:
+            import requests  # type: ignore[import-untyped, unused-ignore]
+        except ImportError:
+            _INSTALLED = False
+            _ORIGINAL_SEND = None
+            return
+        if _ORIGINAL_SEND is not None:
+            setattr(requests.Session, "send", _ORIGINAL_SEND)
         _ORIGINAL_SEND = None
-        return
-    if _ORIGINAL_SEND is not None:
-        setattr(requests.Session, "send", _ORIGINAL_SEND)
-    _ORIGINAL_SEND = None
-    _INSTALLED = False
+        _INSTALLED = False
 
 
 # --------------------------------------------------------------------------- #

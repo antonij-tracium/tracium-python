@@ -19,9 +19,22 @@ import logging
 import os
 import sys
 import threading
+import weakref
 from typing import Any
 
 from ..helpers.global_state import PATCH_LOCK
+
+# Tracks loops we've already installed our task factory on. Using a
+# WeakSet keyed on the loop object avoids setting attributes on the loop
+# itself — uvloop's C type and other slotted loop classes reject arbitrary
+# attribute assignment, which previously made us re-wrap on every call to
+# ``new_event_loop`` and layer factories indefinitely.
+_FACTORY_INSTALLED_LOOPS: weakref.WeakSet[Any] = weakref.WeakSet()
+_FACTORY_INSTALLED_LOOPS_LOCK = threading.Lock()
+# Fallback when the loop object isn't weak-referenceable: remember its id().
+# A bounded set so we don't grow unbounded over a long-running process.
+_FACTORY_INSTALLED_LOOP_IDS: set[int] = set()
+_FACTORY_INSTALLED_LOOP_IDS_MAX = 1024
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +179,16 @@ def _patch_policy_new_event_loop(policy_cls: Any) -> None:
 
 
 def _install_factory_on_loop(loop: Any) -> None:
-    if getattr(loop, "_tracium_task_factory_installed", False):
-        return
+    with _FACTORY_INSTALLED_LOOPS_LOCK:
+        try:
+            if loop in _FACTORY_INSTALLED_LOOPS:
+                return
+        except TypeError:
+            # Loop object is unhashable — fall through and rely on id() set.
+            pass
+        if id(loop) in _FACTORY_INSTALLED_LOOP_IDS:
+            return
+
     import asyncio
 
     previous = loop.get_task_factory()
@@ -180,9 +201,22 @@ def _install_factory_on_loop(loop: Any) -> None:
 
     try:
         loop.set_task_factory(factory)
-        loop._tracium_task_factory_installed = True
     except Exception:
-        pass
+        return
+
+    with _FACTORY_INSTALLED_LOOPS_LOCK:
+        try:
+            _FACTORY_INSTALLED_LOOPS.add(loop)
+            return
+        except TypeError:
+            pass
+        # Bound the id() fallback so very long-running processes that churn
+        # loops don't leak memory. Evict an arbitrary id — at worst we re-wrap
+        # an already-wrapped loop once, which is still bounded by the marker
+        # we set immediately afterward.
+        if len(_FACTORY_INSTALLED_LOOP_IDS) >= _FACTORY_INSTALLED_LOOP_IDS_MAX:
+            _FACTORY_INSTALLED_LOOP_IDS.pop()
+        _FACTORY_INSTALLED_LOOP_IDS.add(id(loop))
 
 
 def _patch_asyncio_new_event_loop(asyncio_mod: Any) -> None:

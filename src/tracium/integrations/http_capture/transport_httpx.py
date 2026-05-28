@@ -489,44 +489,53 @@ def install() -> None:
     """Patch :class:`httpx.Client` and :class:`httpx.AsyncClient` so every new
     instance has its transport wrapped with our LLM-capturing transport.
 
-    Idempotent. Existing client instances created before ``install()`` are not
-    affected — that's a small price for not retroactively touching live state.
+    Idempotent and thread-safe. Existing client instances created before
+    ``install()`` are not affected — that's a small price for not retroactively
+    touching live state.
     """
     global _INSTALLED, _ORIGINAL_SYNC_INIT, _ORIGINAL_ASYNC_INIT
+    # Double-checked locking: avoid taking the global PATCH_LOCK on the hot
+    # path once we're already installed.
     if _INSTALLED:
         return
 
-    import functools
+    from ...helpers.global_state import PATCH_LOCK
 
-    orig_sync_init = httpx.Client.__init__
-    orig_async_init = httpx.AsyncClient.__init__
+    with PATCH_LOCK:
+        if _INSTALLED:
+            return
 
-    @functools.wraps(orig_sync_init)
-    def _patched_sync_init(self: httpx.Client, *args: Any, **kwargs: Any) -> None:
-        orig_sync_init(self, *args, **kwargs)
-        _wrap_transports_sync(self)
+        import functools
 
-    @functools.wraps(orig_async_init)
-    def _patched_async_init(self: httpx.AsyncClient, *args: Any, **kwargs: Any) -> None:
-        orig_async_init(self, *args, **kwargs)
-        _wrap_transports_async(self)
+        orig_sync_init = httpx.Client.__init__
+        orig_async_init = httpx.AsyncClient.__init__
 
-    # Preserve the original signature so introspection (FastAPI TestClient,
-    # pydantic-settings, openapi tooling) keeps seeing the real parameters.
-    try:
-        import inspect
+        @functools.wraps(orig_sync_init)
+        def _patched_sync_init(self: httpx.Client, *args: Any, **kwargs: Any) -> None:
+            orig_sync_init(self, *args, **kwargs)
+            _wrap_transports_sync(self)
 
-        _patched_sync_init.__signature__ = inspect.signature(orig_sync_init)  # type: ignore[attr-defined]
-        _patched_async_init.__signature__ = inspect.signature(orig_async_init)  # type: ignore[attr-defined]
-    except (ValueError, TypeError):
-        pass
+        @functools.wraps(orig_async_init)
+        def _patched_async_init(self: httpx.AsyncClient, *args: Any, **kwargs: Any) -> None:
+            orig_async_init(self, *args, **kwargs)
+            _wrap_transports_async(self)
 
-    _ORIGINAL_SYNC_INIT = orig_sync_init
-    _ORIGINAL_ASYNC_INIT = orig_async_init
-    httpx.Client.__init__ = _patched_sync_init  # type: ignore[method-assign]
-    httpx.AsyncClient.__init__ = _patched_async_init  # type: ignore[method-assign]
+        # Preserve the original signature so introspection (FastAPI TestClient,
+        # pydantic-settings, openapi tooling) keeps seeing the real parameters.
+        try:
+            import inspect
 
-    _INSTALLED = True
+            _patched_sync_init.__signature__ = inspect.signature(orig_sync_init)  # type: ignore[attr-defined]
+            _patched_async_init.__signature__ = inspect.signature(orig_async_init)  # type: ignore[attr-defined]
+        except (ValueError, TypeError):
+            pass
+
+        _ORIGINAL_SYNC_INIT = orig_sync_init
+        _ORIGINAL_ASYNC_INIT = orig_async_init
+        httpx.Client.__init__ = _patched_sync_init  # type: ignore[method-assign]
+        httpx.AsyncClient.__init__ = _patched_async_init  # type: ignore[method-assign]
+
+        _INSTALLED = True
     logger.info("tracium: http_capture installed for httpx (sync + async)")
 
 
@@ -541,13 +550,19 @@ def uninstall() -> None:
     global _INSTALLED, _ORIGINAL_SYNC_INIT, _ORIGINAL_ASYNC_INIT
     if not _INSTALLED:
         return
-    if _ORIGINAL_SYNC_INIT is not None:
-        httpx.Client.__init__ = _ORIGINAL_SYNC_INIT  # type: ignore[method-assign]
-    if _ORIGINAL_ASYNC_INIT is not None:
-        httpx.AsyncClient.__init__ = _ORIGINAL_ASYNC_INIT  # type: ignore[method-assign]
-    _ORIGINAL_SYNC_INIT = None
-    _ORIGINAL_ASYNC_INIT = None
-    _INSTALLED = False
+
+    from ...helpers.global_state import PATCH_LOCK
+
+    with PATCH_LOCK:
+        if not _INSTALLED:
+            return
+        if _ORIGINAL_SYNC_INIT is not None:
+            httpx.Client.__init__ = _ORIGINAL_SYNC_INIT  # type: ignore[method-assign]
+        if _ORIGINAL_ASYNC_INIT is not None:
+            httpx.AsyncClient.__init__ = _ORIGINAL_ASYNC_INIT  # type: ignore[method-assign]
+        _ORIGINAL_SYNC_INIT = None
+        _ORIGINAL_ASYNC_INIT = None
+        _INSTALLED = False
 
 
 def _wrap_transports_sync(client: httpx.Client) -> None:

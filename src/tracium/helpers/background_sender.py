@@ -105,7 +105,12 @@ class BackgroundSender:
         # Trace IDs the backend has returned 404 for. Further span/complete/fail
         # POSTs to these traces would be wasted retries, so we drop them on
         # enqueue and on dequeue. FIFO-bounded so the cap evicts oldest first.
+        # OrderedDict is not thread-safe; concurrent popitem/__setitem__ from
+        # the worker (on 404) and reads from arbitrary user threads (in
+        # `enqueue`) can corrupt the internal linked list. Guard with its own
+        # lock so it never contends with the worker-lifecycle `_lock`.
         self._dead_trace_ids: OrderedDict[str, None] = OrderedDict()
+        self._dead_trace_ids_lock = threading.Lock()
         self._dead_trace_ids_max = 1024
 
         # Background thread is lazy-started on first enqueue, and self-terminates
@@ -140,13 +145,18 @@ class BackgroundSender:
                     if self._shutdown.is_set():
                         break
                     if time.monotonic() >= idle_deadline:
-                        # Re-check under lock — if a new item arrived after
-                        # the qsize check, keep processing.
+                        # Hand off the "is a worker alive" flag under the same
+                        # lock that producers use in `_ensure_worker`, so a
+                        # producer can never observe a live worker that is
+                        # about to die. Clear the flag while still holding the
+                        # lock; once released, any new enqueue will start a
+                        # fresh worker via _ensure_worker.
                         with self._lock:
-                            if self._queue.empty():
-                                self._worker_thread = None
-                                return
-                            idle_deadline = time.monotonic() + self._idle_timeout
+                            if not self._queue.empty():
+                                idle_deadline = time.monotonic() + self._idle_timeout
+                                continue
+                            self._worker_thread = None
+                            return
                     continue
 
                 if request is None:
@@ -179,22 +189,27 @@ class BackgroundSender:
         """Remember a trace_id the backend has 404'd. Subsequent POSTs to that
         trace are dropped at enqueue time. FIFO-bounded — at the cap we evict
         the oldest entry rather than an arbitrary one."""
-        if trace_id in self._dead_trace_ids:
-            return
-        if len(self._dead_trace_ids) >= self._dead_trace_ids_max:
-            try:
-                self._dead_trace_ids.popitem(last=False)
-            except KeyError:
-                pass
-        self._dead_trace_ids[trace_id] = None
+        with self._dead_trace_ids_lock:
+            if trace_id in self._dead_trace_ids:
+                return
+            if len(self._dead_trace_ids) >= self._dead_trace_ids_max:
+                try:
+                    self._dead_trace_ids.popitem(last=False)
+                except KeyError:
+                    pass
+            self._dead_trace_ids[trace_id] = None
         logger.debug("tracium: dropping further POSTs to trace %s (backend returned 404)", trace_id)
+
+    def _is_trace_dead(self, trace_id: str) -> bool:
+        with self._dead_trace_ids_lock:
+            return trace_id in self._dead_trace_ids
 
     def _process_request(self, request: QueuedRequest) -> None:
         """Process a single queued request with retry logic."""
         # Pre-check: skip if this trace has already 404'd. The trace was never
         # created on the backend, so further span/complete/fail POSTs are wasted.
         trace_id = self._trace_id_from_path(request.path)
-        if trace_id and trace_id in self._dead_trace_ids:
+        if trace_id and self._is_trace_dead(trace_id):
             return
         try:
             if self._config.security_config:
@@ -327,7 +342,7 @@ class BackgroundSender:
 
             # Drop early if the destination trace is already known-dead.
             trace_id_for_path = self._trace_id_from_path(path)
-            if trace_id_for_path and trace_id_for_path in self._dead_trace_ids:
+            if trace_id_for_path and self._is_trace_dead(trace_id_for_path):
                 return True
 
             # Serverless / sync mode: POST inline. No queue, no thread.
@@ -365,6 +380,10 @@ class BackgroundSender:
                 try:
                     self._queue.put(request, timeout=timeout)
                     self._total_enqueued += 1
+                    # Close the race window: a worker that decided to idle-exit
+                    # between our earlier _ensure_worker() and this put would
+                    # leave the item stranded. Re-arm to be safe.
+                    self._ensure_worker()
                     return True
                 except queue.Full:
                     # Even with blocking, we timed out
@@ -380,6 +399,10 @@ class BackgroundSender:
             else:
                 self._queue.put_nowait(request)
                 self._total_enqueued += 1
+                # Close the race window: a worker that decided to idle-exit
+                # between our earlier _ensure_worker() and this put would
+                # leave the item stranded. Re-arm to be safe.
+                self._ensure_worker()
                 return True
 
         except queue.Full:
