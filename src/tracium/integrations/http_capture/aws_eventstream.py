@@ -38,7 +38,7 @@ from collections.abc import Iterator
 from typing import Any
 
 _PRELUDE_SIZE = 12  # total_length (4) + headers_length (4) + prelude_crc (4)
-_TRAILER_SIZE = 4   # message CRC
+_TRAILER_SIZE = 4  # message CRC
 
 
 def iter_messages(buffer: bytes) -> Iterator[tuple[dict[str, Any], bytes]]:

@@ -166,7 +166,7 @@ class BackgroundSender:
             prefix = "/agents/traces/"
             if not path.startswith(prefix):
                 return None
-            tail = path[len(prefix):]
+            tail = path[len(prefix) :]
             slash = tail.find("/")
             if slash <= 0:
                 return None
@@ -187,9 +187,7 @@ class BackgroundSender:
             except KeyError:
                 pass
         self._dead_trace_ids.add(trace_id)
-        logger.debug(
-            "tracium: dropping further POSTs to trace %s (backend returned 404)", trace_id
-        )
+        logger.debug("tracium: dropping further POSTs to trace %s (backend returned 404)", trace_id)
 
     def _process_request(self, request: QueuedRequest) -> None:
         """Process a single queued request with retry logic."""

@@ -81,13 +81,13 @@ _SKIP_PATTERNS = [
     # Long-lived runtimes whose bootstrap frame would otherwise be the
     # "outermost user frame" forever, defeating per-invocation trace
     # boundaries. Skipping them makes the handler/task function the entry.
-    "/var/runtime/",          # AWS Lambda
-    "/var/lang/",             # AWS Lambda (alt path)
-    "/awslambdaric/",         # Lambda runtime interface client
-    "/prefect/",              # Prefect workers
-    "/celery/",               # Celery workers
-    "/rq/worker",             # RQ
-    "/dramatiq/",             # Dramatiq
+    "/var/runtime/",  # AWS Lambda
+    "/var/lang/",  # AWS Lambda (alt path)
+    "/awslambdaric/",  # Lambda runtime interface client
+    "/prefect/",  # Prefect workers
+    "/celery/",  # Celery workers
+    "/rq/worker",  # RQ
+    "/dramatiq/",  # Dramatiq
 ]
 
 _WEB_FRAMEWORK_PATTERNS = {

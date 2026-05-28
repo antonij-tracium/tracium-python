@@ -95,9 +95,7 @@ def test_captures_openai_request(
     assert captured_spans[0].input_tokens == 7
 
 
-def test_owned_capture_skips_emission(
-    captured_spans: list[Any], install_once: None
-) -> None:
+def test_owned_capture_skips_emission(captured_spans: list[Any], install_once: None) -> None:
     fake_response = _make_response(
         json_body={"choices": [{"message": {"content": "x"}}], "usage": {}}
     )
@@ -118,9 +116,7 @@ def test_owned_capture_skips_emission(
     assert captured_spans == []
 
 
-def test_non_llm_url_passes_through(
-    captured_spans: list[Any], install_once: None
-) -> None:
+def test_non_llm_url_passes_through(captured_spans: list[Any], install_once: None) -> None:
     fake_response = _make_response(json_body={"ok": True})
 
     class _StubAdapter(requests.adapters.HTTPAdapter):

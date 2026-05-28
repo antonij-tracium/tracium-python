@@ -71,9 +71,7 @@ def _response_done(
     if text:
         output.append({"type": "message", "content": [{"type": "text", "text": text}]})
     if transcript:
-        output.append(
-            {"type": "message", "content": [{"type": "audio", "transcript": transcript}]}
-        )
+        output.append({"type": "message", "content": [{"type": "audio", "transcript": transcript}]})
     for tc in tool_calls or []:
         output.append(tc)
     return {
@@ -345,9 +343,7 @@ def test_response_started_at_used_for_span_timing(
         # Simulate some elapsed wall-clock time before response.done lands.
         # (We just emit immediately; the assertion is that started_at is
         # bounded by the call to response.created above.)
-        tracker.on_event(
-            _response_done(text="hi", usage={"input_tokens": 1, "output_tokens": 1})
-        )
+        tracker.on_event(_response_done(text="hi", usage={"input_tokens": 1, "output_tokens": 1}))
     after = datetime.now(timezone.utc)
     assert recorded_starts
     assert before <= recorded_starts[0] <= after

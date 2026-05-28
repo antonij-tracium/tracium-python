@@ -196,9 +196,7 @@ def _extract_image_output(call: LLMCall, resp: dict[str, Any]) -> None:
         call.output = out
 
 
-def _extract_audio_output(
-    call: LLMCall, resp: dict[str, Any], req: dict[str, Any]
-) -> None:
+def _extract_audio_output(call: LLMCall, resp: dict[str, Any], req: dict[str, Any]) -> None:
     # Whisper transcription / translation returns top-level ``text`` (and
     # optionally segments, language, duration).
     if isinstance(resp.get("text"), str):
@@ -219,9 +217,7 @@ def _extract_moderation_output(call: LLMCall, resp: dict[str, Any]) -> None:
     if isinstance(results, list) and results:
         first = results[0] or {}
         flagged_categories = [
-            name
-            for name, flag in (first.get("categories") or {}).items()
-            if flag
+            name for name, flag in (first.get("categories") or {}).items() if flag
         ]
         call.output = {
             "flagged": bool(first.get("flagged")),
@@ -230,9 +226,7 @@ def _extract_moderation_output(call: LLMCall, resp: dict[str, Any]) -> None:
         }
 
 
-def _parse_openai_responses(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def _parse_openai_responses(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     """Parse OpenAI's Responses API (``/v1/responses``)."""
     call = LLMCall(provider="openai", operation="responses")
     req = req_body if isinstance(req_body, dict) else {}
@@ -273,9 +267,7 @@ def _parse_openai_responses(
     return call
 
 
-def _parse_openai_assistants(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def _parse_openai_assistants(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     """Parse OpenAI Assistants v2 (threads, runs, steps, tool submission)."""
     path = (urlparse(url).path or "").lower()
     operation = _detect_assistants_operation(path)
@@ -316,9 +308,7 @@ def _parse_openai_assistants(
     return call
 
 
-def _parse_openai_batches(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def _parse_openai_batches(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     """Parse OpenAI Batch API (``/v1/batches``).
 
     Batch jobs don't have a model on the request — the model lives inside each
@@ -354,9 +344,7 @@ def _parse_openai_batches(
 # --------------------------------------------------------------------------- #
 
 
-def parse_anthropic(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def parse_anthropic(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     """Dispatch by URL path to the right Anthropic parser."""
     path = (urlparse(url).path or "").lower()
     if path.endswith("/count_tokens") or "/count_tokens" in path:
@@ -372,9 +360,7 @@ def parse_anthropic(
     return _parse_anthropic_messages(url, req_body, resp_body, status_code)
 
 
-def _parse_anthropic_messages(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def _parse_anthropic_messages(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     call = LLMCall(provider="anthropic", operation="chat")
     req = req_body if isinstance(req_body, dict) else {}
     call.model = req.get("model")
@@ -394,13 +380,9 @@ def _parse_anthropic_messages(
     content = resp.get("content")
     if isinstance(content, list):
         text_parts = [
-            b.get("text", "")
-            for b in content
-            if isinstance(b, dict) and b.get("type") == "text"
+            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
         ]
-        tool_uses = [
-            b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"
-        ]
+        tool_uses = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
         if text_parts:
             call.output = "".join(text_parts)
         if tool_uses:
@@ -427,9 +409,7 @@ def _parse_anthropic_count_tokens(
     return call
 
 
-def _parse_anthropic_batches(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def _parse_anthropic_batches(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     call = LLMCall(provider="anthropic", operation="batch")
     req = req_body if isinstance(req_body, dict) else {}
     if isinstance(req.get("requests"), list):
@@ -450,9 +430,7 @@ def _parse_anthropic_batches(
     return call
 
 
-def _parse_anthropic_files(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def _parse_anthropic_files(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     """Parse Anthropic Files API (beta).
 
     Files endpoints are *storage* operations, not LLM calls — so we emit a
@@ -520,9 +498,7 @@ def _parse_anthropic_files(
     return call
 
 
-def _classify_anthropic_files_call(
-    path: str, resp_body: Any
-) -> tuple[str, str]:
+def _classify_anthropic_files_call(path: str, resp_body: Any) -> tuple[str, str]:
     """Infer the Files-API operation from URL path + response shape.
 
     Returns ``(operation_name, action_hint)``. The HTTP method isn't visible
@@ -656,15 +632,13 @@ def _split_jsonl(body: Any) -> list[Any]:
 # --------------------------------------------------------------------------- #
 
 
-def parse_google_gemini(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def parse_google_gemini(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     """Dispatch by URL action (``:action`` suffix) to the right Gemini parser.
 
     Covers ``generateContent``, ``streamGenerateContent``, ``embedContent``,
     ``batchEmbedContents``, ``countTokens``. Same shapes work for Vertex AI.
     """
-    path = (urlparse(url).path or "")
+    path = urlparse(url).path or ""
     action = _gemini_action(path) or "generateContent"
 
     if action in ("embedContent", "batchEmbedContents"):
@@ -719,9 +693,7 @@ def _parse_gemini_generate(
     return call
 
 
-def _parse_gemini_embed(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def _parse_gemini_embed(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     call = LLMCall(provider="google", operation="embedding")
     call.model = _model_from_gemini_url(url)
     req = req_body if isinstance(req_body, dict) else {}
@@ -765,9 +737,7 @@ def _parse_gemini_count_tokens(
 # --------------------------------------------------------------------------- #
 
 
-def parse_bedrock(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def parse_bedrock(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     """Dispatch by URL action to the right Bedrock parser.
 
     - ``/model/{id}/invoke`` and ``/invoke-with-response-stream`` use per-model
@@ -775,15 +745,13 @@ def parse_bedrock(
     - ``/model/{id}/converse`` and ``/converse-stream`` use Bedrock's unified
       Converse API which has a stable shape across models.
     """
-    path = (urlparse(url).path or "")
+    path = urlparse(url).path or ""
     if "/converse" in path:
         return _parse_bedrock_converse(url, req_body, resp_body, status_code)
     return _parse_bedrock_invoke(url, req_body, resp_body, status_code)
 
 
-def _parse_bedrock_converse(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def _parse_bedrock_converse(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     call = LLMCall(provider="bedrock", operation="chat")
     call.model = _model_from_bedrock_url(url)
 
@@ -808,9 +776,7 @@ def _parse_bedrock_converse(
     output = (resp.get("output") or {}).get("message") or {}
     content = output.get("content")
     if isinstance(content, list):
-        text_parts = [
-            b.get("text", "") for b in content if isinstance(b, dict) and "text" in b
-        ]
+        text_parts = [b.get("text", "") for b in content if isinstance(b, dict) and "text" in b]
         tool_uses = [b.get("toolUse") for b in content if isinstance(b, dict) and "toolUse" in b]
         if text_parts:
             call.output = "".join(text_parts)
@@ -819,9 +785,7 @@ def _parse_bedrock_converse(
     return call
 
 
-def _parse_bedrock_invoke(
-    url: str, req_body: Any, resp_body: Any, status_code: int
-) -> LLMCall:
+def _parse_bedrock_invoke(url: str, req_body: Any, resp_body: Any, status_code: int) -> LLMCall:
     """Per-model unwrapping of the legacy InvokeModel API."""
     call = LLMCall(provider="bedrock", operation="chat")
     call.model = _model_from_bedrock_url(url)
@@ -942,11 +906,7 @@ def parse_unknown(url: str, req_body: Any, resp_body: Any, status_code: int) -> 
     call = LLMCall(provider="unknown", operation="unknown")
     if isinstance(req_body, dict):
         call.model = req_body.get("model") or req_body.get("model_name")
-        call.input = (
-            req_body.get("messages")
-            or req_body.get("prompt")
-            or req_body.get("input")
-        )
+        call.input = req_body.get("messages") or req_body.get("prompt") or req_body.get("input")
     if status_code >= 400:
         call.error = _format_generic_error(resp_body, status_code)
     elif isinstance(resp_body, dict):

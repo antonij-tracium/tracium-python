@@ -38,7 +38,9 @@ class TestDetectProvider:
         assert detect_provider("https://api.mistral.ai/v1/chat/completions")[0] == "mistral"
 
     def test_google_gemini(self) -> None:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent"
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent"
+        )
         assert detect_provider(url)[0] == "google"
 
     def test_bedrock(self) -> None:
@@ -55,7 +57,9 @@ class TestDetectProvider:
 
     def test_self_hosted_via_path(self) -> None:
         """Ollama / vLLM / LocalAI on `/v1/chat/completions`."""
-        assert detect_provider("http://localhost:11434/v1/chat/completions")[0] == "openai-compatible"
+        assert (
+            detect_provider("http://localhost:11434/v1/chat/completions")[0] == "openai-compatible"
+        )
 
     def test_non_llm_url(self) -> None:
         assert detect_provider("https://example.com/api/users") is None
@@ -191,16 +195,13 @@ class TestAnthropicParser:
 class TestGoogleParser:
     def test_gemini_response(self) -> None:
         url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-1.5-pro:generateContent"
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent"
         )
         response = {
             "candidates": [{"content": {"parts": [{"text": "Hello!"}]}}],
             "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 2},
         }
-        call = parse_google_gemini(
-            url, {"contents": [{"parts": [{"text": "hi"}]}]}, response, 200
-        )
+        call = parse_google_gemini(url, {"contents": [{"parts": [{"text": "hi"}]}]}, response, 200)
         assert call.provider == "google"
         assert call.model == "gemini-1.5-pro"
         assert call.output == "Hello!"

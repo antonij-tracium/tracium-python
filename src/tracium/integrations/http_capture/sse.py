@@ -59,11 +59,12 @@ class SSEAccumulator:
             self._handle_line(self._buffer.rstrip(b"\r"))
             self._buffer = b""
 
-        message: dict[str, Any] = {"role": self._role or "assistant", "content": "".join(self._text)}
+        message: dict[str, Any] = {
+            "role": self._role or "assistant",
+            "content": "".join(self._text),
+        }
         if self._tool_calls:
-            message["tool_calls"] = [
-                self._tool_calls[k] for k in sorted(self._tool_calls.keys())
-            ]
+            message["tool_calls"] = [self._tool_calls[k] for k in sorted(self._tool_calls.keys())]
         result: dict[str, Any] = {
             "choices": [{"message": message, "finish_reason": self._finish_reason}],
         }
@@ -72,7 +73,6 @@ class SSEAccumulator:
         if self._usage:
             result["usage"] = self._usage
         return result
-
 
     def _handle_line(self, line: bytes) -> None:
         if not line or line.startswith(b":"):  # heartbeat / comment

@@ -148,7 +148,11 @@ def recheck_parallelism_for_span(
                 # Only match siblings within the same trace. Without this, two
                 # sequential traces sharing a parent_span_id collision could
                 # produce phantom "parallel" relationships across traces.
-                if trace_id is not None and record.trace_id is not None and record.trace_id != trace_id:
+                if (
+                    trace_id is not None
+                    and record.trace_id is not None
+                    and record.trace_id != trace_id
+                ):
                     continue
                 time_diff = abs(current_time - record.created_at)
                 if time_diff <= PARALLEL_DETECTION_WINDOW:
@@ -254,7 +258,11 @@ def register_span_creation(
         for record in _span_creation_registry.values():
             if record.parent_span_id == parent_span_id:
                 # Only match siblings within the same trace.
-                if trace_id is not None and record.trace_id is not None and record.trace_id != trace_id:
+                if (
+                    trace_id is not None
+                    and record.trace_id is not None
+                    and record.trace_id != trace_id
+                ):
                     continue
                 time_diff = abs(current_time - record.created_at)
                 if time_diff <= PARALLEL_DETECTION_WINDOW:

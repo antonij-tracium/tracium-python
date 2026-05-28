@@ -89,9 +89,7 @@ class TestSyncTransport:
 
     def test_owned_capture_suppresses_emit(self, captured_spans: list[Any]) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            return _build_openai_response(
-                {"choices": [{"message": {"content": "x"}}], "usage": {}}
-            )
+            return _build_openai_response({"choices": [{"message": {"content": "x"}}], "usage": {}})
 
         transport = TraciumHTTPXTransport(httpx.MockTransport(handler))
         with httpx.Client(transport=transport) as client:
@@ -255,7 +253,9 @@ class TestEndToEndWithRealTrace:
                 )
 
         llm_spans = [p for p in recorded if p.get("span_type") == "llm"]
-        assert llm_spans, f"no llm span recorded; saw types: {[p.get('span_type') for p in recorded]}"
+        assert llm_spans, (
+            f"no llm span recorded; saw types: {[p.get('span_type') for p in recorded]}"
+        )
         completed = [p for p in llm_spans if p.get("status") == "completed"]
         assert completed
         final = completed[-1]

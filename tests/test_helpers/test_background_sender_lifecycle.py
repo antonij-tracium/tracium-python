@@ -5,7 +5,6 @@ spawn a worker thread."""
 
 from __future__ import annotations
 
-import os
 import time
 from unittest.mock import MagicMock
 
@@ -130,7 +129,9 @@ class TestServerlessDetection:
             ("TRACIUM_FORCE_SYNC", "1"),
         ],
     )
-    def test_serverless_envs_trigger_sync_mode(self, env_var, value, monkeypatch, mock_httpx_client, config):
+    def test_serverless_envs_trigger_sync_mode(
+        self, env_var, value, monkeypatch, mock_httpx_client, config
+    ):
         monkeypatch.setenv(env_var, value)
         assert _is_serverless_env()
         sender = BackgroundSender(mock_httpx_client, config)

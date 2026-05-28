@@ -46,16 +46,12 @@ def _clean_registry():
 async def test_async_fanout_shares_single_auto_trace(
     tracium_client: TraciumClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        att, "_find_workflow_entry_point", lambda: ("test:fanout-entry", "fanout")
-    )
+    monkeypatch.setattr(att, "_find_workflow_entry_point", lambda: ("test:fanout-entry", "fanout"))
 
     captured: list[tuple[str, bool]] = []
 
     async def worker() -> None:
-        handle, created = att.get_or_create_auto_trace(
-            tracium_client, agent_name="fanout-agent"
-        )
+        handle, created = att.get_or_create_auto_trace(tracium_client, agent_name="fanout-agent")
         captured.append((handle.id, created))
 
     await asyncio.gather(worker(), worker(), worker())
@@ -89,9 +85,7 @@ def test_web_traces_not_registered(
     tracium_client: TraciumClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Concurrent HTTP requests on the same route must not adopt each other's trace."""
-    monkeypatch.setattr(
-        att, "_find_workflow_entry_point", lambda: ("web:/api/foo", "/api/foo")
-    )
+    monkeypatch.setattr(att, "_find_workflow_entry_point", lambda: ("web:/api/foo", "/api/foo"))
     monkeypatch.setattr(att, "_get_web_route_info", lambda: ("/api/foo", "/api/foo"))
     monkeypatch.setattr(att, "register_cleanup", lambda: None)
     from tracium.instrumentation import web_frameworks as wf
@@ -107,9 +101,7 @@ def test_web_traces_not_registered(
 def test_close_unregisters_from_process_registry(
     tracium_client: TraciumClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        att, "_find_workflow_entry_point", lambda: ("test:close-entry", "close")
-    )
+    monkeypatch.setattr(att, "_find_workflow_entry_point", lambda: ("test:close-entry", "close"))
 
     handle, _ = att.get_or_create_auto_trace(tracium_client, agent_name="close-test")
     with att._AUTO_TRACE_REGISTRY_LOCK:

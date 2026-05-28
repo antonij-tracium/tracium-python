@@ -132,9 +132,7 @@ class TestBatchResults:
 class TestEmitWritesCacheCreationToWire:
     """End-to-end: an LLMCall with cache_creation_input_tokens lands on the wire."""
 
-    def test_payload_includes_cache_creation_field(
-        self, tracium_client, monkeypatch
-    ) -> None:
+    def test_payload_includes_cache_creation_field(self, tracium_client, monkeypatch) -> None:
         from datetime import datetime, timezone
 
         from tracium.integrations.http_capture.emit import emit_llm_span

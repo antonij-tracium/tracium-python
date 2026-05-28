@@ -237,9 +237,7 @@ def _emit_from_bedrock_eventstream(
         reconstructed = reconstruct_bedrock_stream(path, model, collector.get_bytes())
         call = parse(url, request_body, reconstructed, response.status_code)
     except Exception as e:
-        logger.debug(
-            "tracium Bedrock stream reconstruct failed: %s: %s", type(e).__name__, e
-        )
+        logger.debug("tracium Bedrock stream reconstruct failed: %s: %s", type(e).__name__, e)
         return
     if call is not None:
         emit_llm_span(call, started_at)
@@ -290,9 +288,7 @@ class TraciumHTTPXTransport(httpx.BaseTransport):
             if buffered is not None:
                 collector = _BedrockByteCollector()
                 collector.feed(buffered)
-                _emit_from_bedrock_eventstream(
-                    url, request_body, response, collector, started_at
-                )
+                _emit_from_bedrock_eventstream(url, request_body, response, collector, started_at)
                 return response
 
             collector = _BedrockByteCollector()
@@ -368,9 +364,7 @@ class TraciumAsyncHTTPXTransport(httpx.AsyncBaseTransport):
             if buffered is not None:
                 collector = _BedrockByteCollector()
                 collector.feed(buffered)
-                _emit_from_bedrock_eventstream(
-                    url, request_body, response, collector, started_at
-                )
+                _emit_from_bedrock_eventstream(url, request_body, response, collector, started_at)
                 return response
 
             collector = _BedrockByteCollector()

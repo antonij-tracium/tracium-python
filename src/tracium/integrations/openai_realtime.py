@@ -396,9 +396,7 @@ def _extract_response_output(
                 part_dict.get("text"), str
             ):
                 text_parts.append(part_dict["text"])
-            elif pkind in ("audio", "input_audio") and isinstance(
-                part_dict.get("transcript"), str
-            ):
+            elif pkind in ("audio", "input_audio") and isinstance(part_dict.get("transcript"), str):
                 text_parts.append(part_dict["transcript"])
 
     return text_parts, tool_calls

@@ -55,9 +55,7 @@ def chunk_event(inner_json: dict[str, Any]) -> bytes:
     """Build a Bedrock-style chunk event: outer wraps base64(inner JSON)."""
     inner_b64 = base64.b64encode(json.dumps(inner_json).encode("utf-8")).decode("ascii")
     outer = json.dumps({"bytes": inner_b64}).encode("utf-8")
-    return encode_eventstream_message(
-        {":message-type": "event", ":event-type": "chunk"}, outer
-    )
+    return encode_eventstream_message({":message-type": "event", ":event-type": "chunk"}, outer)
 
 
 def converse_event(inner_json: dict[str, Any]) -> bytes:
@@ -77,11 +75,7 @@ class TestEventStreamFraming:
         assert events == [{"type": "text", "text": "hi"}]
 
     def test_multiple_messages_decoded_in_order(self) -> None:
-        body = (
-            chunk_event({"n": 1})
-            + chunk_event({"n": 2})
-            + chunk_event({"n": 3})
-        )
+        body = chunk_event({"n": 1}) + chunk_event({"n": 2}) + chunk_event({"n": 3})
         events = list(iter_bedrock_events(body))
         assert [e["n"] for e in events] == [1, 2, 3]
 
@@ -108,8 +102,12 @@ class TestConverseStreamReconstruction:
     def test_text_message(self) -> None:
         body = (
             converse_event({"messageStart": {"role": "assistant"}})
-            + converse_event({"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"text": "Hi "}}})
-            + converse_event({"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"text": "there"}}})
+            + converse_event(
+                {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"text": "Hi "}}}
+            )
+            + converse_event(
+                {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"text": "there"}}}
+            )
             + converse_event({"contentBlockStop": {"contentBlockIndex": 0}})
             + converse_event({"messageStop": {"stopReason": "end_turn"}})
             + converse_event({"metadata": {"usage": {"inputTokens": 5, "outputTokens": 2}}})
@@ -234,12 +232,9 @@ class TestInvokeStreamTitan:
     MODEL = "amazon.titan-text-express-v1"
 
     def test_output_text_concat(self) -> None:
-        body = (
-            chunk_event({"outputText": "Hi ", "inputTextTokenCount": 3, "tokenCount": 1})
-            + chunk_event(
-                {"outputText": "there", "tokenCount": 1, "completionReason": "FINISH"}
-            )
-        )
+        body = chunk_event(
+            {"outputText": "Hi ", "inputTextTokenCount": 3, "tokenCount": 1}
+        ) + chunk_event({"outputText": "there", "tokenCount": 1, "completionReason": "FINISH"})
         recon = reconstruct_response(self.PATH, self.MODEL, body)
         call = parse(
             "https://bedrock-runtime.us-east-1.amazonaws.com" + self.PATH,

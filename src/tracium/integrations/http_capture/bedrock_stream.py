@@ -312,9 +312,9 @@ class _LlamaInvokeAssembler(_Assembler):
         if isinstance(event.get("prompt_token_count"), int):
             self._prompt_tokens = event["prompt_token_count"]
         if isinstance(event.get("generation_token_count"), int):
-            self._generation_tokens = (
-                (self._generation_tokens or 0) + event["generation_token_count"]
-            )
+            self._generation_tokens = (self._generation_tokens or 0) + event[
+                "generation_token_count"
+            ]
         if isinstance(event.get("stop_reason"), str):
             self._stop_reason = event["stop_reason"]
 
@@ -409,9 +409,7 @@ class _CohereInvokeAssembler(_Assembler):
         if isinstance(event.get("prompt_tokens"), int):
             self._prompt_tokens = event["prompt_tokens"]
         if isinstance(event.get("generation_tokens"), int):
-            self._generation_tokens = (
-                (self._generation_tokens or 0) + event["generation_tokens"]
-            )
+            self._generation_tokens = (self._generation_tokens or 0) + event["generation_tokens"]
 
     def finalize(self) -> dict[str, Any]:
         out: dict[str, Any] = {"generations": [{"text": "".join(self._text)}]}

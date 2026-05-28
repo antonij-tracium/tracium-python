@@ -62,9 +62,7 @@ class TestOpenAIResponses:
     def test_function_call_output(self) -> None:
         req = {"model": "gpt-4o", "input": "weather?", "tools": [{"type": "function"}]}
         resp = {
-            "output": [
-                {"type": "function_call", "name": "get_weather", "arguments": "{}"}
-            ],
+            "output": [{"type": "function_call", "name": "get_weather", "arguments": "{}"}],
             "usage": {"input_tokens": 8, "output_tokens": 4},
         }
         call = parse(self.URL, _b(req), _b(resp), 200)
@@ -130,9 +128,7 @@ class TestOpenAIAssistants:
             "model": "gpt-4o",
             "step_details": {
                 "type": "tool_calls",
-                "tool_calls": [
-                    {"id": "tc_1", "type": "function", "function": {"name": "f"}}
-                ],
+                "tool_calls": [{"id": "tc_1", "type": "function", "function": {"name": "f"}}],
             },
         }
         call = parse(url, b"", _b(resp), 200)
@@ -254,10 +250,7 @@ class TestGeminiExtensions:
         assert call.output == {"vectors": 1}
 
     def test_count_tokens(self) -> None:
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/"
-            "models/gemini-1.5-pro:countTokens"
-        )
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:countTokens"
         resp = {"totalTokens": 42}
         call = parse(url, _b({"contents": []}), _b(resp), 200)
         assert call.operation == "count_tokens"

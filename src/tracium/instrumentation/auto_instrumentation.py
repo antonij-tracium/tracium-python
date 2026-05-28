@@ -53,9 +53,7 @@ def configure_auto_instrumentation(client: TraciumClient) -> None:
         _install_thread_propagation()
         activated.append("thread-propagation")
     except Exception as e:
-        logger.debug(
-            "tracium: thread-propagation install failed: %s: %s", type(e).__name__, e
-        )
+        logger.debug("tracium: thread-propagation install failed: %s: %s", type(e).__name__, e)
 
     if options.auto_instrument_langchain:
         if _safe(register_langchain_handler, client, "langchain"):
