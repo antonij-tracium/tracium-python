@@ -11,33 +11,13 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.client import TraciumClient
-from ..helpers.global_state import STATE, get_default_tags, get_options
+from ..helpers.global_state import PATCH_LOCK, STATE, get_default_tags, get_options
 from ..helpers.logging_config import get_logger
 
 logger = get_logger()
 
 
-def _extract_tools(kwargs: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """Extract tool definitions from Google Gemini API call kwargs."""
-    try:
-        tools = kwargs.get("tools")
-        if not tools or not isinstance(tools, list):
-            return None
-        result = []
-        for tool in tools:
-            if isinstance(tool, dict):
-                result.append(tool)
-            elif hasattr(tool, "model_dump"):
-                result.append(tool.model_dump())
-            elif hasattr(tool, "to_dict"):
-                result.append(tool.to_dict())
-            elif hasattr(tool, "dict"):
-                result.append(tool.dict())
-            else:
-                result.append({"raw": str(tool)})
-        return result or None
-    except Exception:
-        return None
+from ._shared import extract_tools as _extract_tools  # noqa: E402
 
 
 def _normalize_prompt(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | dict[str, Any] | None:
@@ -76,13 +56,14 @@ def _extract_model_name(model_obj: Any) -> str | None:
 
 
 def patch_google_genai(client: TraciumClient) -> None:
-    if STATE.google_patched:
-        return
+    with PATCH_LOCK:
+        if STATE.google_patched:
+            return
 
-    _patch_legacy_sdk(client)
-    _patch_new_sdk(client)
+        _patch_legacy_sdk(client)
+        _patch_new_sdk(client)
 
-    STATE.google_patched = True
+        STATE.google_patched = True
 
 
 def _patch_legacy_sdk(client: TraciumClient) -> None:
@@ -260,8 +241,11 @@ def _trace_google_call(
     except Exception as e:
         logger.debug(f"Google trace setup failed (continuing without tracing): {e}")
 
+    from .http_capture.dedup import owned_capture
+
     try:
-        response = original_fn()
+        with owned_capture():
+            response = original_fn()
     except Exception as e:
         if span_handle and span_context:
             try:
@@ -378,8 +362,11 @@ async def _trace_google_call_async(
     except Exception as e:
         logger.debug(f"Google async trace setup failed (continuing without tracing): {e}")
 
+    from .http_capture.dedup import owned_capture
+
     try:
-        response = await original_fn()
+        with owned_capture():
+            response = await original_fn()
     except Exception as exc:
         if span_handle and span_context:
             try:

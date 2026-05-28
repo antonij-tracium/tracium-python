@@ -8,6 +8,7 @@ asynchronously in a background thread.
 
 from __future__ import annotations
 
+import os as _os
 import queue
 import threading
 import time
@@ -25,6 +26,27 @@ if TYPE_CHECKING:
     from ..core.config import TraciumClientConfig
 
 logger = get_logger()
+
+
+_SERVERLESS_ENV_VARS = (
+    "AWS_LAMBDA_FUNCTION_NAME",  # AWS Lambda
+    "AWS_EXECUTION_ENV",  # AWS Lambda runtime
+    "K_SERVICE",  # Google Cloud Run
+    "FUNCTION_TARGET",  # Google Cloud Functions (2nd gen)
+    "FUNCTION_NAME",  # Google Cloud Functions (1st gen)
+    "VERCEL",  # Vercel
+    "FUNCTIONS_WORKER_RUNTIME",  # Azure Functions
+    "TRACIUM_FORCE_SYNC",  # explicit user override
+)
+
+
+def _is_serverless_env() -> bool:
+    """Detect FaaS / short-lived container environments where we must POST
+    inline rather than rely on a background-thread queue (the container can
+    be frozen between requests and the queue would silently drop spans)."""
+    import os
+
+    return any(os.environ.get(k) for k in _SERVERLESS_ENV_VARS)
 
 
 class RequestMethod(Enum):
@@ -59,6 +81,8 @@ class BackgroundSender:
         config: TraciumClientConfig,
         max_queue_size: int = 10000,
         flush_timeout: float = 5.0,
+        idle_timeout: float = 30.0,
+        sync_mode: bool = False,
     ) -> None:
         self._client = httpx_client
         self._config = config
@@ -67,8 +91,9 @@ class BackgroundSender:
         self._queue: queue.Queue[QueuedRequest | None] = queue.Queue(maxsize=queue_size)
         self._shutdown = threading.Event()
         self._flush_timeout = flush_timeout
+        self._idle_timeout = float(getattr(config, "sender_idle_timeout", idle_timeout))
+        self._sync_mode = sync_mode or _is_serverless_env()
         self._worker_thread: threading.Thread | None = None
-        self._started = False
         self._lock = threading.Lock()
 
         self._total_enqueued = 0
@@ -76,31 +101,51 @@ class BackgroundSender:
         self._total_sent = 0
         self._total_failed = 0
         self._last_warning_time = 0.0
+        # Trace IDs the backend has returned 404 for. Further span/complete/fail
+        # POSTs to these traces would be wasted retries, so we drop them on
+        # enqueue and on dequeue. Bounded to avoid unbounded growth.
+        self._dead_trace_ids: set[str] = set()
+        self._dead_trace_ids_max = 1024
 
-        self._start_worker()
+        # Background thread is lazy-started on first enqueue, and self-terminates
+        # after `idle_timeout` seconds of empty queue. This minimizes thread
+        # presence during interactive debug sessions (debugpy compatibility).
+        # In sync_mode, no thread is ever started.
 
-    def _start_worker(self) -> None:
-        """Start the background worker thread."""
+    def _ensure_worker(self) -> None:
+        """Start the worker thread lazily if not already running."""
+        if self._sync_mode:
+            return
         with self._lock:
-            if self._started:
+            if self._worker_thread is not None and self._worker_thread.is_alive():
                 return
+            self._shutdown.clear()
             self._worker_thread = threading.Thread(
                 target=self._worker_loop,
                 name="tracium-background-sender",
                 daemon=True,
             )
             self._worker_thread.start()
-            self._started = True
 
     def _worker_loop(self) -> None:
-        """Main worker loop that processes queued requests."""
+        """Worker loop. Exits after idle_timeout seconds of empty queue so the
+        thread is not present during long idle periods (debugger-friendly)."""
+        idle_deadline = time.monotonic() + self._idle_timeout
         while True:
             try:
                 try:
-                    request = self._queue.get(timeout=0.1)
+                    request = self._queue.get(timeout=0.5)
                 except queue.Empty:
                     if self._shutdown.is_set():
                         break
+                    if time.monotonic() >= idle_deadline:
+                        # Re-check under lock — if a new item arrived after
+                        # the qsize check, keep processing.
+                        with self._lock:
+                            if self._queue.empty():
+                                self._worker_thread = None
+                                return
+                            idle_deadline = time.monotonic() + self._idle_timeout
                     continue
 
                 if request is None:
@@ -108,12 +153,51 @@ class BackgroundSender:
 
                 self._process_request(request)
                 self._queue.task_done()
+                idle_deadline = time.monotonic() + self._idle_timeout
 
             except Exception as e:
                 logger.debug(f"Background sender error (ignored): {type(e).__name__}: {e}")
 
+    @staticmethod
+    def _trace_id_from_path(path: str) -> str | None:
+        """Extract the trace_id from ``/agents/traces/<id>/spans`` etc., or
+        return None for endpoints that aren't trace-scoped."""
+        try:
+            prefix = "/agents/traces/"
+            if not path.startswith(prefix):
+                return None
+            tail = path[len(prefix):]
+            slash = tail.find("/")
+            if slash <= 0:
+                return None
+            return tail[:slash]
+        except Exception:
+            return None
+
+    def _mark_trace_dead(self, trace_id: str) -> None:
+        """Remember a trace_id the backend has 404'd. Subsequent POSTs to that
+        trace are dropped at enqueue time. Bounded to avoid unbounded growth."""
+        if trace_id in self._dead_trace_ids:
+            return
+        if len(self._dead_trace_ids) >= self._dead_trace_ids_max:
+            # Forget the oldest entry — set iteration order isn't FIFO but
+            # discarding any element keeps the cap honest.
+            try:
+                self._dead_trace_ids.pop()
+            except KeyError:
+                pass
+        self._dead_trace_ids.add(trace_id)
+        logger.debug(
+            "tracium: dropping further POSTs to trace %s (backend returned 404)", trace_id
+        )
+
     def _process_request(self, request: QueuedRequest) -> None:
         """Process a single queued request with retry logic."""
+        # Pre-check: skip if this trace has already 404'd. The trace was never
+        # created on the backend, so further span/complete/fail POSTs are wasted.
+        trace_id = self._trace_id_from_path(request.path)
+        if trace_id and trace_id in self._dead_trace_ids:
+            return
         try:
             if self._config.security_config:
                 is_allowed, wait_time = check_rate_limit(self._config.security_config)
@@ -154,6 +238,12 @@ class BackgroundSender:
                 except httpx.HTTPStatusError as e:
                     last_exception = e
                     status_code = e.response.status_code if e.response else None
+                    # A 404 on a trace-scoped path means the trace was never
+                    # created on the backend (zombie trace). Stop retrying and
+                    # mark the trace dead so future enqueues skip it too.
+                    if status_code == 404 and trace_id:
+                        self._mark_trace_dead(trace_id)
+                        return
                     if not should_retry(None, status_code, retry_config):
                         break
                 except (httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError) as e:
@@ -231,6 +321,19 @@ class BackgroundSender:
                 callback=callback,
             )
 
+            # Drop early if the destination trace is already known-dead.
+            trace_id_for_path = self._trace_id_from_path(path)
+            if trace_id_for_path and trace_id_for_path in self._dead_trace_ids:
+                return True
+
+            # Serverless / sync mode: POST inline. No queue, no thread.
+            if self._sync_mode:
+                self._process_request(request)
+                self._total_enqueued += 1
+                return True
+
+            self._ensure_worker()
+
             # Check queue capacity and warn if needed
             current_size = self._queue.qsize()
             threshold = getattr(self._config, "queue_warning_threshold", 0.8)
@@ -295,6 +398,8 @@ class BackgroundSender:
         Args:
             timeout: Maximum time to wait in seconds. Uses default if None.
         """
+        if self._sync_mode:
+            return
         try:
             self._queue.join()
         except Exception:
@@ -385,3 +490,16 @@ def shutdown_background_sender() -> None:
         if _background_sender is not None:
             _background_sender.shutdown()
             _background_sender = None
+
+
+def _reset_after_fork() -> None:
+    """Reset sender state in forked child. The parent's worker thread does not
+    survive fork; its queue and lock are inherited in indeterminate state. Drop
+    the inherited instance so the child lazily creates a fresh sender."""
+    global _background_sender, _sender_lock
+    _sender_lock = threading.Lock()
+    _background_sender = None
+
+
+if hasattr(_os, "register_at_fork"):
+    _os.register_at_fork(after_in_child=_reset_after_fork)

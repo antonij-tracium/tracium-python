@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...core.client import TraciumClient
-from ...helpers.global_state import STATE, get_options
+from ...helpers.global_state import PATCH_LOCK, STATE, get_options
 from .context_manager import wrap_stream_context_manager, wrap_stream_context_manager_async
 from .tracing import trace_anthropic_call, trace_anthropic_call_async
 
@@ -18,6 +18,11 @@ def patch_anthropic(client: TraciumClient) -> None:
 
     Supports both sync and async Anthropic clients, including streaming.
     """
+    with PATCH_LOCK:
+        _patch_anthropic_locked(client)
+
+
+def _patch_anthropic_locked(client: TraciumClient) -> None:
     if STATE.anthropic_patched:
         return
 

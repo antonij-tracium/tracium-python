@@ -54,12 +54,9 @@ class FrameInfo:
 
 
 def _get_function_context_map() -> dict[str, str]:
-    """Get or create the function context map for this execution context."""
+    """Read the function context map for this execution context (read-only copy)."""
     ctx_map = _FUNCTION_CONTEXT_SPANS.get()
-    if ctx_map is None:
-        ctx_map = {}
-        _FUNCTION_CONTEXT_SPANS.set(ctx_map)
-    return ctx_map
+    return dict(ctx_map) if ctx_map else {}
 
 
 def _reset_function_context(trace_id: str | None = None) -> dict[str, str]:
@@ -67,33 +64,31 @@ def _reset_function_context(trace_id: str | None = None) -> dict[str, str]:
     Clear the cached function context map and associate it with the current trace.
     Also resets the invocation counter for a fresh start.
     """
-    ctx_map: dict[str, str] = {}
-    _FUNCTION_CONTEXT_SPANS.set(ctx_map)
+    _FUNCTION_CONTEXT_SPANS.set({})
     _FUNCTION_CONTEXT_TRACE_ID.set(trace_id)
     _INVOCATION_COUNTER.set({})
-    return ctx_map
+    return {}
 
 
 def _get_invocation_counter() -> dict[str, int]:
-    """Get or create the invocation counter for this execution context."""
+    """Read the invocation counter (read-only copy) for this execution context."""
     counter = _INVOCATION_COUNTER.get()
-    if counter is None:
-        counter = {}
-        _INVOCATION_COUNTER.set(counter)
-    return counter
+    return dict(counter) if counter else {}
 
 
 def _get_invocation_id(function_name: str, file_path: str, line_number: int) -> str:
     """
     Get a unique invocation ID for this specific function call.
 
-    This ensures that parallel executions of the same function get different IDs.
+    The counter is stored in a ContextVar but the dict itself is replaced
+    on every increment, not mutated in place. That keeps the counter task-local
+    under asyncio fan-out — sibling tasks (whose contexts started as a copy of
+    the parent's) each evolve their own dict instead of stomping a shared one.
     """
-    counter = _get_invocation_counter()
+    counter = _INVOCATION_COUNTER.get() or {}
     func_key = f"{file_path}:{function_name}:{line_number}"
-
     invocation_num = counter.get(func_key, 0) + 1
-    counter[func_key] = invocation_num
+    _INVOCATION_COUNTER.set({**counter, func_key: invocation_num})
 
     timestamp = int(time.time() * 1_000_000)
     return f"{invocation_num}_{timestamp}"
@@ -116,21 +111,23 @@ def _get_user_call_hierarchy() -> list[FrameInfo]:
             function_name = code.co_name
 
             skip_patterns = [
-                "src/tracium/",
-                "openai",
-                "anthropic",
-                "google",
-                "langchain",
-                "langgraph",
-                "threading",
-                "concurrent",
-                "asyncio",
-                "site-packages",
-                "werkzeug",
-                "starlette",
-                "django/core",
-                "uvicorn",
-                "gunicorn",
+                # Bracketed with path separators so user files like
+                # "openai_chat.py" aren't mistakenly skipped.
+                "/tracium/",
+                "/openai/",
+                "/anthropic/",
+                "/google/",
+                "/langchain/",
+                "/langgraph/",
+                "/threading.py",
+                "/concurrent/",
+                "/asyncio/",
+                "/site-packages/",
+                "/werkzeug/",
+                "/starlette/",
+                "/django/core/",
+                "/uvicorn/",
+                "/gunicorn/",
             ]
 
             if any(pattern in filename for pattern in skip_patterns):
@@ -219,3 +216,9 @@ def clear_function_context():
     _INVOCATION_COUNTER.set({})
     with _CACHE_LOCK:
         _FUNCTION_SPAN_CACHE.clear()
+
+
+def _set_function_span(key: str, span_id: str) -> None:
+    """Record a span id under ``key`` in a context-local, copy-on-write fashion."""
+    ctx_map = _FUNCTION_CONTEXT_SPANS.get() or {}
+    _FUNCTION_CONTEXT_SPANS.set({**ctx_map, key: span_id})

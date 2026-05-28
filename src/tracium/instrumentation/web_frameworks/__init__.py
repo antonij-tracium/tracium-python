@@ -11,6 +11,8 @@ All integrations are tried in order until one succeeds.
 
 from __future__ import annotations
 
+from .asgi import TraciumASGIMiddleware as TraciumASGIMiddleware
+from .asgi import get_asgi_route_info
 from .celery import get_celery_task_info, register_celery_response_hook
 from .django import get_django_route_info, register_django_response_hook
 from .fastapi import get_fastapi_route_info, register_fastapi_response_hook
@@ -29,6 +31,7 @@ def get_web_route_info() -> tuple[str, str] | None:
         get_flask_route_info,
         get_fastapi_route_info,
         get_django_route_info,
+        get_asgi_route_info,
         get_generic_route_info,
         get_celery_task_info,
     ]

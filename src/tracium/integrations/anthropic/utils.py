@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from .._shared import extract_tools as extract_tools  # re-export
+
+__all__ = ["normalize_messages", "extract_tools", "extract_model"]
+
 
 def normalize_messages(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any] | None:
     """Extract messages and system prompt from Anthropic API call."""
@@ -20,27 +24,6 @@ def normalize_messages(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[st
         return result
 
     return None
-
-
-def extract_tools(kwargs: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """Extract tool definitions from Anthropic API call kwargs."""
-    try:
-        tools = kwargs.get("tools")
-        if not tools or not isinstance(tools, list):
-            return None
-        result = []
-        for tool in tools:
-            if isinstance(tool, dict):
-                result.append(tool)
-            elif hasattr(tool, "model_dump"):
-                result.append(tool.model_dump())
-            elif hasattr(tool, "dict"):
-                result.append(tool.dict())
-            else:
-                result.append({"raw": str(tool)})
-        return result or None
-    except Exception:
-        return None
 
 
 def extract_model(kwargs: dict[str, Any]) -> str | None:

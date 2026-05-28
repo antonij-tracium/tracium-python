@@ -8,6 +8,7 @@ SDK errors will never break user applications.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import datetime
@@ -132,12 +133,14 @@ class AgentSpanHandle:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cached_input_tokens: int | None = None,
+        cache_creation_input_tokens: int | None = None,
     ) -> None:
         try:
             self._context.set_token_usage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cached_input_tokens=cached_input_tokens,
+                cache_creation_input_tokens=cache_creation_input_tokens,
             )
         except Exception:
             pass
@@ -208,6 +211,8 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cached_input_tokens: int | None = None,
+        cache_creation_input_tokens: int | None = None,
+        started_at: datetime | None = None,
     ) -> None:
         self.state = state
         self.span_type = span_type
@@ -215,9 +220,12 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
         self._input = input_payload
         self._output: Any | None = None
         self._tags: list[str] = _normalize_tags(tags)
-        self.parent_span_id = parent_span_id or state.current_parent_span_id
+        from ..context.trace_context import current_depth_level, current_parent_span_id
+
+        self.parent_span_id = parent_span_id or current_parent_span_id()
         self.span_id = span_id or str(uuid.uuid4())
-        self.depth_level = depth_level if depth_level is not None else state.current_depth_level
+        self.depth_level = depth_level if depth_level is not None else current_depth_level()
+        self._span_token: contextvars.Token | None = None
 
         try:
             from ..helpers.parallel_tracker import register_span_creation
@@ -227,6 +235,7 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
                 parent_span_id=self.parent_span_id,
                 provided_parallel_group_id=parallel_group_id,
                 provided_sequence_number=sequence_number,
+                trace_id=getattr(self.state, "trace_id", None),
             )
             self.parallel_group_id = parallel_group_id or detected_group_id
             self.sequence_number = (
@@ -241,11 +250,14 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
         self._input_tokens = input_tokens
         self._output_tokens = output_tokens
         self._cached_input_tokens = cached_input_tokens
+        self._cache_creation_input_tokens = cache_creation_input_tokens
         self._tools: list[dict[str, Any]] | None = None
         self._tool_calls: list[dict[str, Any]] | None = None
         self._status = "in_progress"
         self._error: str | None = None
-        self._start_time = _utcnow()
+        # If the caller knows when the underlying work started (e.g. an HTTP
+        # transport timing an LLM call), use that. Otherwise we time from now.
+        self._start_time = started_at or _utcnow()
         self._handle = AgentSpanHandle(self)
         self.last_payload: dict[str, Any] | None = None
         self._initially_sent = False
@@ -301,7 +313,9 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
             except Exception:
                 pass
 
-            self.state.push_span(self.span_id)
+            from ..context.trace_context import CURRENT_SPAN
+
+            self._span_token = CURRENT_SPAN.set((self.span_id, self.depth_level))
 
             try:
                 if self.parallel_group_id is None:
@@ -310,6 +324,7 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
                     detected_group_id, detected_seq_num = recheck_parallelism_for_span(
                         span_id=self.span_id,
                         parent_span_id=self.parent_span_id,
+                        trace_id=getattr(self.state, "trace_id", None),
                     )
                     if detected_group_id is not None:
                         self.parallel_group_id = detected_group_id
@@ -408,6 +423,8 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
                 api_payload["output_tokens"] = self._output_tokens
             if self._cached_input_tokens is not None:
                 api_payload["cached_input_tokens"] = self._cached_input_tokens
+            if self._cache_creation_input_tokens is not None:
+                api_payload["cache_creation_input_tokens"] = self._cache_creation_input_tokens
 
             payload: dict[str, Any] = {
                 "span_id": self.span_id,
@@ -456,7 +473,11 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
             logger.debug(f"Span __exit__ failed (ignored): {type(e).__name__}: {e}")
         finally:
             try:
-                self.state.pop_span()
+                if self._span_token is not None:
+                    from ..context.trace_context import CURRENT_SPAN
+
+                    CURRENT_SPAN.reset(self._span_token)
+                    self._span_token = None
             except Exception:
                 pass
 
@@ -484,6 +505,7 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cached_input_tokens: int | None = None,
+        cache_creation_input_tokens: int | None = None,
     ) -> None:
         if input_tokens is not None:
             try:
@@ -498,6 +520,11 @@ class AgentSpanContext(contextlib.AbstractContextManager["AgentSpanHandle"]):
         if cached_input_tokens is not None:
             try:
                 self._cached_input_tokens = int(cached_input_tokens)
+            except (TypeError, ValueError):
+                pass
+        if cache_creation_input_tokens is not None:
+            try:
+                self._cache_creation_input_tokens = int(cache_creation_input_tokens)
             except (TypeError, ValueError):
                 pass
 

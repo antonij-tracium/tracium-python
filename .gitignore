@@ -50,3 +50,6 @@ Thumbs.db
 *.bak
 *.tmp
 *.temp
+
+# Claude Code harness state (settings + transient sub-agent worktrees)
+.claude/
