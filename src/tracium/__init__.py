@@ -4,20 +4,12 @@ Public entrypoint for the Tracium SDK auto instrumentation layer.
 
 from __future__ import annotations
 
-# ruff: noqa: E402
 import os
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .context.context_propagation import patch_thread_pool_executor
-from .helpers.thread_helpers import patch_threading_module
-
-patch_thread_pool_executor()
-patch_threading_module()
-
-from .context.context_propagation import enable_automatic_context_propagation  # noqa: E402
-from .context.tenant_context import get_current_tenant, set_tenant  # noqa: E402
-from .context.trace_context import current_trace  # noqa: E402
+from .context.tenant_context import get_current_tenant, set_tenant
+from .context.trace_context import current_trace
 from .core import TraciumClient, TraciumClientConfig, __version__
 from .helpers.global_state import (
     TraciumInitOptions,
@@ -30,6 +22,13 @@ from .helpers.global_state import (
 )
 from .helpers.logging_config import configure_logging, get_logger, redact_sensitive_data
 from .helpers.retry import RetryConfig, retry_with_backoff
+from .helpers.thread_helpers import (
+    ContextThread,
+    get_current_trace_context,
+    run_in_thread,
+    with_context,
+    with_trace_context,
+)
 from .helpers.validation import (
     validate_agent_name,
     validate_api_key,
@@ -62,6 +61,11 @@ __all__ = [
     "TraciumClientConfig",
     "agent_span",
     "span",
+    "run_in_thread",
+    "with_context",
+    "ContextThread",
+    "get_current_trace_context",
+    "with_trace_context",
     "wrap_wsgi_app",
     "__version__",
     "configure_logging",
@@ -166,7 +170,6 @@ def init(
 
     register_cleanup()
 
-    enable_automatic_context_propagation()
     configure_auto_instrumentation(client)
     return client
 
@@ -247,12 +250,247 @@ def trace(api_key: str | None = None, **kwargs: Any) -> TraciumClient:
     kwargs.setdefault("auto_instrument_llm_clients", True)
     client = init(api_key=api_key, **kwargs)
 
+    _auto_wrap_wsgi_in_caller()
+    _auto_wrap_lambda_handler_in_caller()
+    _auto_wrap_asgi_in_caller()
+
+    return client
+
+
+def _is_serverless() -> bool:
+    """True when running under AWS Lambda / Google Cloud Functions / Vercel /
+    Azure Functions / Cloud Run. Used to enable per-invocation flush and the
+    Lambda handler auto-wrap."""
+    return any(
+        os.environ.get(k)
+        for k in (
+            "AWS_LAMBDA_FUNCTION_NAME",
+            "AWS_EXECUTION_ENV",
+            "K_SERVICE",
+            "FUNCTION_TARGET",
+            "FUNCTION_NAME",
+            "VERCEL",
+            "FUNCTIONS_WORKER_RUNTIME",
+            "TRACIUM_FORCE_SYNC",
+        )
+    )
+
+
+_AUTO_WRAP_FRAME_BLOCKLIST = (
+    "_pytest",
+    "pytest",
+    "pluggy",
+    "gunicorn",
+    "uvicorn",
+    "hypercorn",
+    "daphne",
+    "click",
+    "typer",
+    "celery",
+    "anyio",
+    "asyncio",
+    "importlib",
+    "runpy",
+)
+
+
+def _candidate_caller_frames(max_depth: int = 20) -> list[Any]:
+    """Walk up the stack collecting frames likely to belong to user code.
+
+    Frames whose ``__name__`` starts with a known third-party launcher
+    (pytest, gunicorn, uvicorn, click, …) or any ``tracium.*`` module are
+    skipped — we don't want to wrap an ``app``/``main`` defined inside one
+    of those frameworks.
+    """
+    import inspect
+
+    frame = inspect.currentframe()
+    if not frame:
+        return []
+
+    out: list[Any] = []
+    f = frame.f_back
+    depth = 0
+    while f is not None and depth < max_depth:
+        module_name = f.f_globals.get("__name__") or ""
+        head = module_name.split(".", 1)[0]
+        is_tracium = module_name == "tracium" or module_name.startswith("tracium.")
+        if head not in _AUTO_WRAP_FRAME_BLOCKLIST and not is_tracium:
+            out.append(f)
+        f = f.f_back
+        depth += 1
+    return out
+
+
+def _auto_wrap_lambda_handler_in_caller() -> None:
+    """If running in AWS Lambda (or similar FaaS where the runtime imports the
+    user's handler by name), wrap it so that each invocation finalizes outstanding
+    traces and forces a flush before the container is frozen."""
+    if not _is_serverless():
+        return
+
+    import sys
+
+    for f in _candidate_caller_frames():
+        caller_globals = f.f_globals
+        module_name = caller_globals.get("__name__")
+        caller_module = sys.modules.get(module_name) if module_name else None
+
+        # ``main`` is too generic to wrap from an arbitrary frame — restrict
+        # it to the program entry module so we don't wrap a helper called
+        # ``main`` that happens to live in caller scope.
+        names: tuple[str, ...] = ("lambda_handler", "handler")
+        if module_name == "__main__":
+            names = names + ("main",)
+
+        for name in names:
+            if name not in caller_globals:
+                continue
+            fn = caller_globals[name]
+            if not callable(fn) or getattr(fn, "_tracium_wrapped", False):
+                continue
+            wrapped = _wrap_serverless_handler(fn)
+            caller_globals[name] = wrapped
+            if caller_module:
+                setattr(caller_module, name, wrapped)
+            return
+
+
+def _wrap_serverless_handler(handler: Any) -> Any:
+    """Wrap a Lambda/Cloud Function handler so each invocation produces its own
+    auto-trace and flushes telemetry inline before returning."""
+    import functools
+    import inspect
+
+    is_async = inspect.iscoroutinefunction(handler)
+
+    if is_async:
+
+        @functools.wraps(handler)
+        async def _async_wrapped(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await handler(*args, **kwargs)
+            finally:
+                _serverless_finalize()
+
+        _async_wrapped._tracium_wrapped = True  # type: ignore[attr-defined]
+        return _async_wrapped
+
+    @functools.wraps(handler)
+    def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return handler(*args, **kwargs)
+        finally:
+            _serverless_finalize()
+
+    _wrapped._tracium_wrapped = True  # type: ignore[attr-defined]
+    return _wrapped
+
+
+def _serverless_finalize() -> None:
+    """Per-invocation cleanup: close auto-traces, drain the process-wide
+    registries, and force a flush.
+
+    Draining the registries (not just the active contextvar) is what makes
+    warm-container reuse leak-proof: if a prior invocation crashed without
+    unwinding cleanly, its entries stay in ``_AUTO_TRACE_REGISTRY`` /
+    ``_WEB_AUTO_TRACE_REGISTRY`` until somebody sweeps them. The next
+    invocation runs ``_serverless_finalize`` on its way out, which clears
+    both, so leaks can survive at most one invocation."""
+    try:
+        from .instrumentation.auto_trace_tracker import cleanup_auto_trace
+
+        cleanup_auto_trace()
+    except Exception:
+        pass
+    try:
+        client = _get_client()
+        # Cap the flush so a hung backend can't delay the Lambda response.
+        # The cold/warm-path difference here matters: in serverless we'd
+        # rather skip emitting than block the user's request.
+        client.flush(timeout=5.0)
+    except Exception:
+        pass
+
+
+def _auto_wrap_asgi_in_caller() -> None:
+    """If a FastAPI / Starlette / Litestar app is in caller globals, wrap it
+    with the Tracium ASGI middleware so request-scoped traces capture nested
+    LLM spans."""
+    import sys
+
+    try:
+        from .instrumentation.web_frameworks.asgi import TraciumASGIMiddleware
+    except Exception:
+        return
+
+    for f in _candidate_caller_frames():
+        caller_globals = f.f_globals
+        module_name = caller_globals.get("__name__")
+        caller_module = sys.modules.get(module_name) if module_name else None
+
+        for name in ("application", "app", "asgi_app"):
+            if name not in caller_globals:
+                continue
+            app = caller_globals[name]
+            if not callable(app) or getattr(app, "_tracium_wrapped", False):
+                continue
+            if not _looks_like_asgi(app):
+                continue
+            wrapped = TraciumASGIMiddleware(app)
+            wrapped._tracium_wrapped = True  # type: ignore[attr-defined]
+            caller_globals[name] = wrapped
+            if caller_module:
+                setattr(caller_module, name, wrapped)
+            return
+
+
+def _looks_like_asgi(app: Any) -> bool:
+    """Heuristic to detect ASGI apps so we don't wrap them as WSGI."""
+    import inspect
+
+    cls = type(app)
+    module = (getattr(cls, "__module__", "") or "").lower()
+    asgi_modules = (
+        "starlette",
+        "fastapi",
+        "litestar",
+        "sanic",
+        "blacksheep",
+        "quart",
+        "uvicorn",
+        "hypercorn",
+        "channels",
+    )
+    if any(m in module for m in asgi_modules):
+        return True
+
+    call = getattr(app, "__call__", None)
+    if inspect.iscoroutinefunction(call) or inspect.iscoroutinefunction(app):
+        return True
+
+    try:
+        sig = inspect.signature(app)
+        param_names = list(sig.parameters)
+    except (ValueError, TypeError):
+        return False
+
+    if {"scope", "receive", "send"}.issubset(set(param_names)):
+        return True
+    if len(param_names) == 3 and param_names[:3] == ["scope", "receive", "send"]:
+        return True
+    return False
+
+
+def _auto_wrap_wsgi_in_caller() -> None:
     import inspect
     import sys
 
-    frame = inspect.currentframe()
-    if frame and frame.f_back:
-        caller_globals = frame.f_back.f_globals
+    # Walk up the stack so calling trace() from a helper (e.g. def setup(): tracium.trace())
+    # still finds the user's WSGI app in their module globals. Third-party
+    # launcher frames (pytest, gunicorn, …) are skipped by the helper.
+    for f in _candidate_caller_frames():
+        caller_globals = f.f_globals
         module_name = caller_globals.get("__name__")
         caller_module = sys.modules.get(module_name) if module_name else None
 
@@ -275,16 +513,19 @@ def trace(api_key: str | None = None, **kwargs: Any) -> TraciumClient:
             if "django" in getattr(type(app), "__module__", "").lower():
                 continue
 
+            if _looks_like_asgi(app):
+                continue
+
             try:
-                if len(list(inspect.signature(app).parameters)) < 2:
+                params = list(inspect.signature(app).parameters)
+                if len(params) < 2:
                     continue
             except (ValueError, TypeError):
-                pass
+                # Can't introspect (C extension, builtin) — be conservative and skip.
+                continue
 
             wrapped = wrap_wsgi_app(app)
             caller_globals[name] = wrapped
             if caller_module:
                 setattr(caller_module, name, wrapped)
-            break
-
-    return client
+            return

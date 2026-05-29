@@ -98,10 +98,10 @@ class TestExtractTokenUsage:
         assert out == 2_000
         assert cached == 3_000
 
-    def test_total_tokens_fallback_no_cached(self):
-        """When only total_tokens exists, used as input with no cached subtraction."""
+    def test_total_tokens_only_returns_nones(self):
+        """total_tokens alone cannot be split into input/output, so all return None."""
         usage = _FakeUsage({"total_tokens": 15_000})
         inp, out, cached = _extract_token_usage(_FakeResponse(usage))
-        assert inp == 15_000
+        assert inp is None
         assert out is None
         assert cached is None

@@ -61,6 +61,8 @@ _USAGE_ATTRS = (
     "output_tokens",
     "cached_input_tokens",
     "total_tokens",
+    "prompt_tokens_details",
+    "input_tokens_details",
 )
 
 
@@ -103,6 +105,11 @@ def _extract_chunk_content(chunk: Any) -> str | None:
                         return "".join(texts)
 
         if hasattr(chunk, "output_text") and chunk.output_text:
+            # Skip done-events — the full text is already accumulated from delta events.
+            # Returning it here would append a duplicate of the whole response.
+            event_type = getattr(chunk, "type", "")
+            if isinstance(event_type, str) and event_type.endswith(".done"):
+                return None
             return cast(str, chunk.output_text)
     except Exception:
         pass
@@ -163,6 +170,7 @@ def _finalize_stream(
     text_parts: list[str],
     tokens: tuple[int | None, int | None, int | None],
     tool_calls_accumulator: dict[int, dict[str, Any]] | None = None,
+    response_model: str | None = None,
 ) -> None:
     try:
         span_handle.record_output("".join(text_parts) or "(streaming response)")
@@ -172,6 +180,8 @@ def _finalize_stream(
                 output_tokens=tokens[1],
                 cached_input_tokens=tokens[2],
             )
+        if response_model:
+            span_handle.set_model_id(response_model)
         if tool_calls_accumulator:
             calls = [tool_calls_accumulator[k] for k in sorted(tool_calls_accumulator)]
             span_handle.set_tool_calls(calls)
@@ -198,6 +208,7 @@ class _BaseStreamWrapper:
         self._text_parts: list[str] = []
         self._tokens: tuple[int | None, int | None, int | None] = (None, None, None)
         self._tool_calls_acc: dict[int, dict[str, Any]] = {}
+        self._response_model: str | None = None
         self._finalized = False
 
     def __getattr__(self, name: str) -> Any:
@@ -210,19 +221,26 @@ class _BaseStreamWrapper:
             if tokens := _extract_chunk_tokens(chunk):
                 self._tokens = tokens
             _extract_chunk_tool_calls(chunk, self._tool_calls_acc)
+            if self._response_model is None:
+                self._response_model = _get_str_attr(chunk, "model") or None
         except Exception:
             pass
 
-    def _finalize_if_needed(self) -> None:
-        if not self._finalized:
-            self._finalized = True
-            _finalize_stream(
-                self._span_handle,
-                self._span_context,
-                self._text_parts,
-                self._tokens,
-                self._tool_calls_acc or None,
-            )
+    def _finalize_if_needed(self, error: BaseException | None = None) -> None:
+        if self._finalized:
+            return
+        self._finalized = True
+        if error is not None and isinstance(error, Exception):
+            _handle_error(error, self._span_handle, self._span_context)
+            return
+        _finalize_stream(
+            self._span_handle,
+            self._span_context,
+            self._text_parts,
+            self._tokens,
+            self._tool_calls_acc or None,
+            self._response_model,
+        )
 
 
 class StreamWrapper(_BaseStreamWrapper):
@@ -231,10 +249,10 @@ class StreamWrapper(_BaseStreamWrapper):
             self._stream.__enter__()
         return self
 
-    def __exit__(self, *args: Any) -> bool:
-        self._finalize_if_needed()
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        self._finalize_if_needed(error=exc_val)
         if hasattr(self._stream, "__exit__"):
-            return cast(bool, self._stream.__exit__(*args))
+            return cast(bool, self._stream.__exit__(exc_type, exc_val, exc_tb))
         return False
 
     def __iter__(self) -> StreamWrapper:
@@ -243,11 +261,14 @@ class StreamWrapper(_BaseStreamWrapper):
     def __next__(self) -> Any:
         try:
             chunk = next(self._stream)
-            self._process_chunk(chunk)
-            return chunk
         except StopIteration:
             self._finalize_if_needed()
             raise
+        except Exception as e:
+            self._finalize_if_needed(error=e)
+            raise
+        self._process_chunk(chunk)
+        return chunk
 
 
 class AsyncStreamWrapper(_BaseStreamWrapper):
@@ -256,10 +277,10 @@ class AsyncStreamWrapper(_BaseStreamWrapper):
             await self._stream.__aenter__()
         return self
 
-    async def __aexit__(self, *args: Any) -> bool:
-        self._finalize_if_needed()
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        self._finalize_if_needed(error=exc_val)
         if hasattr(self._stream, "__aexit__"):
-            return cast(bool, await self._stream.__aexit__(*args))
+            return cast(bool, await self._stream.__aexit__(exc_type, exc_val, exc_tb))
         return False
 
     def __aiter__(self) -> AsyncStreamWrapper:
@@ -268,32 +289,17 @@ class AsyncStreamWrapper(_BaseStreamWrapper):
     async def __anext__(self) -> Any:
         try:
             chunk = await self._stream.__anext__()
-            self._process_chunk(chunk)
-            return chunk
         except StopAsyncIteration:
             self._finalize_if_needed()
             raise
+        except Exception as e:
+            self._finalize_if_needed(error=e)
+            raise
+        self._process_chunk(chunk)
+        return chunk
 
 
-def _extract_tools(kwargs: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """Extract tool definitions from API call kwargs, returning a lightweight summary."""
-    try:
-        tools = kwargs.get("tools")
-        if not tools or not isinstance(tools, list):
-            return None
-        result = []
-        for tool in tools:
-            if isinstance(tool, dict):
-                result.append(tool)
-            elif hasattr(tool, "model_dump"):
-                result.append(tool.model_dump())
-            elif hasattr(tool, "dict"):
-                result.append(tool.dict())
-            else:
-                result.append({"raw": str(tool)})
-        return result or None
-    except Exception:
-        return None
+from ._shared import extract_tools as _extract_tools  # noqa: E402
 
 
 def _normalize_input(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
@@ -339,6 +345,13 @@ def _normalize_input(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
 
 
 def patch_openai(client: TraciumClient) -> None:
+    from ..helpers.global_state import PATCH_LOCK
+
+    with PATCH_LOCK:
+        _patch_openai_locked(client)
+
+
+def _patch_openai_locked(client: TraciumClient) -> None:
     if STATE.openai_patched:
         return
 
@@ -462,6 +475,12 @@ def _is_streaming(response: Any, kwargs: dict[str, Any], is_async: bool = False)
         if not hasattr(response, "__aiter__" if is_async else "__iter__"):
             return False
         if hasattr(response, "usage") or isinstance(response, str | bytes | dict | list):
+            return False
+        # Pydantic models implement __iter__ over their field names, which
+        # would otherwise look like a stream. Catch them here so non-streaming
+        # endpoints that don't return `usage` (moderation, image generation,
+        # files, etc.) aren't misclassified as streaming.
+        if hasattr(response, "model_dump") or hasattr(response, "model_fields"):
             return False
         if hasattr(response, "read") or hasattr(response, "stream_to_file"):
             return False
@@ -600,7 +619,7 @@ def _finalize_response(
             span_handle.set_status(str(response_status))
         except Exception:
             pass
-    if any(tokens):
+    if any(t is not None for t in tokens):
         span_handle.set_token_usage(
             input_tokens=tokens[0], output_tokens=tokens[1], cached_input_tokens=tokens[2]
         )
@@ -608,8 +627,7 @@ def _finalize_response(
     # Ensure model_id is set for cost calculation (required for embedding pricing on the backend)
     response_model = _get_str_attr(response, "model")
     if response_model:
-        if not model_id or _is_embedding_response(response):
-            span_handle.set_model_id(response_model)
+        span_handle.set_model_id(response_model)
 
     tool_calls = _extract_tool_calls(response)
     if tool_calls:
@@ -661,8 +679,11 @@ def _trace_openai_call(
     except Exception as e:
         logger.debug(f"OpenAI trace setup failed (continuing without tracing): {e}")
 
+    from .http_capture.dedup import owned_capture
+
     try:
-        response = original_fn()
+        with owned_capture():
+            response = original_fn()
     except Exception as e:
         if span_handle and span_context:
             _handle_error(e, span_handle, span_context)
@@ -688,23 +709,17 @@ def _trace_openai_call(
                     trace_id = span_handle.trace_id
                     span_id = span_handle.id
                     if trace_id:
-                        thread = threading.Thread(
-                            target=_complete_assistant_run_sync,
-                            args=(
-                                oai,
-                                response.thread_id,
-                                response.id,
-                                trace_id,
-                                span_id,
-                                client,
-                            ),
-                            kwargs={
-                                "poll_interval_sec": _ASSISTANT_RUN_POLL_INTERVAL_SEC,
-                                "max_wait_sec": _ASSISTANT_RUN_MAX_WAIT_SEC,
-                            },
-                            daemon=True,
+                        _submit_assistant_poll(
+                            _complete_assistant_run_sync,
+                            oai,
+                            response.thread_id,
+                            response.id,
+                            trace_id,
+                            span_id,
+                            client,
+                            poll_interval_sec=_ASSISTANT_RUN_POLL_INTERVAL_SEC,
+                            max_wait_sec=_ASSISTANT_RUN_MAX_WAIT_SEC,
                         )
-                        thread.start()
     except Exception as e:
         logger.debug(f"OpenAI response tracing failed (ignored): {e}")
 
@@ -746,8 +761,11 @@ async def _trace_openai_call_async(
     except Exception as e:
         logger.debug(f"OpenAI async trace setup failed (continuing without tracing): {e}")
 
+    from .http_capture.dedup import owned_capture
+
     try:
-        response = await original_fn()
+        with owned_capture():
+            response = await original_fn()
     except Exception as e:
         if span_handle and span_context:
             _handle_error(e, span_handle, span_context)
@@ -824,18 +842,18 @@ def _extract_token_usage(response: Any) -> tuple[int | None, int | None, int | N
 
         usage_dict = _usage_to_dict(usage)
 
-        prompt_tokens = usage_dict.get("prompt_tokens") or usage_dict.get("input_tokens")
-        completion_tokens = usage_dict.get("completion_tokens") or usage_dict.get("output_tokens")
+        pt = usage_dict.get("prompt_tokens")
+        prompt_tokens = pt if pt is not None else usage_dict.get("input_tokens")
+        ct = usage_dict.get("completion_tokens")
+        completion_tokens = ct if ct is not None else usage_dict.get("output_tokens")
 
-        if prompt_tokens is None and completion_tokens is None:
-            total = usage_dict.get("total_tokens")
-            if total is not None:
-                prompt_tokens = total
+        # Do not fall back to total_tokens: it cannot be split into input/output,
+        # so using it would bill everything at the input rate and silently mischarge.
 
         cached_tokens = None
         # Chat Completions API: prompt_tokens_details.cached_tokens
         # Responses API:        input_tokens_details.cached_tokens
-        for key in ("prompt_tokens_details", "input_tokens_details", "completion_tokens_details"):
+        for key in ("prompt_tokens_details", "input_tokens_details"):
             if cached_tokens is None and isinstance(usage_dict.get(key), dict):
                 cached_tokens = usage_dict[key].get("cached_tokens")
         if cached_tokens is None:
@@ -952,6 +970,30 @@ _PENDING_RUN_STATUSES = frozenset({"queued", "in_progress"})
 _PENDING_RUN_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "expired"})
 _ASSISTANT_RUN_POLL_INTERVAL_SEC = 2
 _ASSISTANT_RUN_MAX_WAIT_SEC = 300  # 5 minutes
+
+
+# Shared lazy executor for Assistant-run polling. Reused across all pending
+# runs in the process so we don't spawn one daemon thread per call (which
+# would accumulate during a chatty Assistants session and is the exact
+# pattern the user has flagged as debugpy-hostile). The executor is created
+# on first need and never explicitly torn down — workers are daemons so they
+# don't block interpreter exit, but at most a small fixed number exist.
+_assistant_poll_executor_lock = threading.Lock()
+_assistant_poll_executor: Any = None
+
+
+def _submit_assistant_poll(fn: Any, *args: Any, **kwargs: Any) -> None:
+    global _assistant_poll_executor
+    if _assistant_poll_executor is None:
+        with _assistant_poll_executor_lock:
+            if _assistant_poll_executor is None:
+                from concurrent.futures import ThreadPoolExecutor
+
+                _assistant_poll_executor = ThreadPoolExecutor(
+                    max_workers=4,
+                    thread_name_prefix="tracium-assistant-poll",
+                )
+    _assistant_poll_executor.submit(fn, *args, **kwargs)
 
 
 def _completed_at_from_run(run: Any) -> str:

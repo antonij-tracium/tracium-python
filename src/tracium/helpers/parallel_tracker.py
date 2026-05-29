@@ -8,6 +8,7 @@ parallel_group_id and sequence_number without requiring user intervention.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import threading
 import time
@@ -33,8 +34,31 @@ class SpanCreationRecord:
     parent_span_id: str | None
     created_at: float
     thread_id: int
+    task_id: int | None = None
     parallel_group_id: str | None = None
     sequence_number: int | None = None
+    trace_id: str | None = None
+
+
+def _current_lane() -> tuple[int, int | None]:
+    """
+    Identify the execution lane the caller is in.
+
+    Lane = (OS thread id, asyncio task id). Two callers are in different lanes
+    if either component differs — that covers both threadpool fan-out and pure
+    asyncio fan-out (``asyncio.gather`` siblings on a single OS thread).
+    """
+    thread_id = threading.get_ident()
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    task_id = id(task) if task is not None else None
+    return thread_id, task_id
+
+
+def _record_lane(record: SpanCreationRecord) -> tuple[int, int | None]:
+    return record.thread_id, record.task_id
 
 
 @dataclass
@@ -94,6 +118,7 @@ def get_parallel_context() -> ParallelContext | None:
 def recheck_parallelism_for_span(
     span_id: str,
     parent_span_id: str | None,
+    trace_id: str | None = None,
 ) -> tuple[str | None, int | None]:
     """
     Re-check for parallelism for a span that's about to be sent to the API.
@@ -115,21 +140,31 @@ def recheck_parallelism_for_span(
                 return current_record.parallel_group_id, current_record.sequence_number
 
         current_time = time.time()
-        current_thread = threading.get_ident()
+        current_thread, current_task = _current_lane()
         recent_siblings: list[SpanCreationRecord] = []
 
         for record in _span_creation_registry.values():
             if record.parent_span_id == parent_span_id and record.span_id != span_id:
+                # Only match siblings within the same trace. Without this, two
+                # sequential traces sharing a parent_span_id collision could
+                # produce phantom "parallel" relationships across traces.
+                if (
+                    trace_id is not None
+                    and record.trace_id is not None
+                    and record.trace_id != trace_id
+                ):
+                    continue
                 time_diff = abs(current_time - record.created_at)
                 if time_diff <= PARALLEL_DETECTION_WINDOW:
                     recent_siblings.append(record)
 
         if recent_siblings:
-            different_thread_siblings = [
-                r for r in recent_siblings if r.thread_id != current_thread
+            current_lane = (current_thread, current_task)
+            different_lane_siblings = [
+                r for r in recent_siblings if _record_lane(r) != current_lane
             ]
 
-            if different_thread_siblings:
+            if different_lane_siblings:
                 group_id = None
                 for sibling in recent_siblings:
                     if sibling.parallel_group_id is not None:
@@ -145,6 +180,8 @@ def recheck_parallelism_for_span(
                         parent_span_id=parent_span_id,
                         created_at=current_time,
                         thread_id=current_thread,
+                        task_id=current_task,
+                        trace_id=trace_id,
                     )
                     _span_creation_registry[span_id] = current_record
 
@@ -167,6 +204,7 @@ def register_span_creation(
     parent_span_id: str | None,
     provided_parallel_group_id: str | None = None,
     provided_sequence_number: int | None = None,
+    trace_id: str | None = None,
 ) -> tuple[str | None, int | None]:
     """
     Register a span creation and automatically detect if it's part of parallel execution.
@@ -188,6 +226,8 @@ def register_span_creation(
     if provided_parallel_group_id is not None and provided_sequence_number is not None:
         return provided_parallel_group_id, provided_sequence_number
 
+    current_thread, current_task = _current_lane()
+
     parallel_ctx = get_parallel_context()
     if parallel_ctx is not None:
         seq = parallel_ctx.get_next_sequence()
@@ -197,9 +237,11 @@ def register_span_creation(
             span_id=span_id,
             parent_span_id=parent_span_id,
             created_at=time.time(),
-            thread_id=threading.get_ident(),
+            thread_id=current_thread,
+            task_id=current_task,
             parallel_group_id=parallel_ctx.group_id,
             sequence_number=seq,
+            trace_id=trace_id,
         )
 
         with _registry_lock:
@@ -208,23 +250,30 @@ def register_span_creation(
         return parallel_ctx.group_id, seq
 
     current_time = time.time()
-    current_thread = threading.get_ident()
+    current_lane = (current_thread, current_task)
 
     with _registry_lock:
         recent_siblings: list[SpanCreationRecord] = []
 
         for record in _span_creation_registry.values():
             if record.parent_span_id == parent_span_id:
+                # Only match siblings within the same trace.
+                if (
+                    trace_id is not None
+                    and record.trace_id is not None
+                    and record.trace_id != trace_id
+                ):
+                    continue
                 time_diff = abs(current_time - record.created_at)
                 if time_diff <= PARALLEL_DETECTION_WINDOW:
                     recent_siblings.append(record)
 
         if recent_siblings:
-            different_thread_siblings = [
-                r for r in recent_siblings if r.thread_id != current_thread
+            different_lane_siblings = [
+                r for r in recent_siblings if _record_lane(r) != current_lane
             ]
 
-            if different_thread_siblings:
+            if different_lane_siblings:
                 group_id = None
 
                 for sibling in recent_siblings:
@@ -240,6 +289,8 @@ def register_span_creation(
                     parent_span_id=parent_span_id,
                     created_at=current_time,
                     thread_id=current_thread,
+                    task_id=current_task,
+                    trace_id=trace_id,
                 )
                 all_siblings = recent_siblings + [record]
                 sorted_all = sorted(all_siblings, key=lambda r: (r.created_at, r.thread_id))
@@ -271,6 +322,8 @@ def register_span_creation(
             parent_span_id=parent_span_id,
             created_at=current_time,
             thread_id=current_thread,
+            task_id=current_task,
+            trace_id=trace_id,
         )
         _span_creation_registry[span_id] = record
 

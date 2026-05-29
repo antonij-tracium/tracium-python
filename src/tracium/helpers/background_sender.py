@@ -8,9 +8,11 @@ asynchronously in a background thread.
 
 from __future__ import annotations
 
+import os as _os
 import queue
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -25,6 +27,27 @@ if TYPE_CHECKING:
     from ..core.config import TraciumClientConfig
 
 logger = get_logger()
+
+
+_SERVERLESS_ENV_VARS = (
+    "AWS_LAMBDA_FUNCTION_NAME",  # AWS Lambda
+    "AWS_EXECUTION_ENV",  # AWS Lambda runtime
+    "K_SERVICE",  # Google Cloud Run
+    "FUNCTION_TARGET",  # Google Cloud Functions (2nd gen)
+    "FUNCTION_NAME",  # Google Cloud Functions (1st gen)
+    "VERCEL",  # Vercel
+    "FUNCTIONS_WORKER_RUNTIME",  # Azure Functions
+    "TRACIUM_FORCE_SYNC",  # explicit user override
+)
+
+
+def _is_serverless_env() -> bool:
+    """Detect FaaS / short-lived container environments where we must POST
+    inline rather than rely on a background-thread queue (the container can
+    be frozen between requests and the queue would silently drop spans)."""
+    import os
+
+    return any(os.environ.get(k) for k in _SERVERLESS_ENV_VARS)
 
 
 class RequestMethod(Enum):
@@ -59,6 +82,8 @@ class BackgroundSender:
         config: TraciumClientConfig,
         max_queue_size: int = 10000,
         flush_timeout: float = 5.0,
+        idle_timeout: float = 30.0,
+        sync_mode: bool = False,
     ) -> None:
         self._client = httpx_client
         self._config = config
@@ -67,61 +92,177 @@ class BackgroundSender:
         self._queue: queue.Queue[QueuedRequest | None] = queue.Queue(maxsize=queue_size)
         self._shutdown = threading.Event()
         self._flush_timeout = flush_timeout
+        self._idle_timeout = float(getattr(config, "sender_idle_timeout", idle_timeout))
+        self._sync_mode = sync_mode or _is_serverless_env()
         self._worker_thread: threading.Thread | None = None
-        self._started = False
         self._lock = threading.Lock()
+        # Stats counters are touched by both producer threads (enqueue path)
+        # and the worker (process/retry path). `+=` on a Python int is not
+        # atomic across all interpreters, and even on CPython a read in
+        # `get_stats` could see torn pairs (e.g. enqueued/sent ratio). Guard
+        # the four counters with a dedicated leaf lock.
+        self._stats_lock = threading.Lock()
 
         self._total_enqueued = 0
         self._total_dropped = 0
         self._total_sent = 0
         self._total_failed = 0
         self._last_warning_time = 0.0
+        # Trace IDs the backend has returned 404 for. Further span/complete/fail
+        # POSTs to these traces would be wasted retries, so we drop them on
+        # enqueue and on dequeue. FIFO-bounded so the cap evicts oldest first.
+        # OrderedDict is not thread-safe; concurrent popitem/__setitem__ from
+        # the worker (on 404) and reads from arbitrary user threads (in
+        # `enqueue`) can corrupt the internal linked list. Guard with its own
+        # lock so it never contends with the worker-lifecycle `_lock`.
+        self._dead_trace_ids: OrderedDict[str, None] = OrderedDict()
+        self._dead_trace_ids_lock = threading.Lock()
+        self._dead_trace_ids_max = 1024
 
-        self._start_worker()
+        # Background thread is lazy-started on first enqueue, and self-terminates
+        # after `idle_timeout` seconds of empty queue. This minimizes thread
+        # presence during interactive debug sessions (debugpy compatibility).
+        # In sync_mode, no thread is ever started.
 
-    def _start_worker(self) -> None:
-        """Start the background worker thread."""
+    def _ensure_worker(self) -> None:
+        """Start the worker thread lazily if not already running."""
+        if self._sync_mode:
+            return
         with self._lock:
-            if self._started:
+            if self._worker_thread is not None and self._worker_thread.is_alive():
                 return
+            # Drain any leftover shutdown sentinels from a previous lifecycle so
+            # the freshly-started worker doesn't immediately exit on a None it
+            # never enqueued for itself.
+            drained: list[QueuedRequest] = []
+            try:
+                while True:
+                    item = self._queue.get_nowait()
+                    if item is None:
+                        self._queue.task_done()
+                        continue
+                    drained.append(item)
+            except queue.Empty:
+                pass
+            for item in drained:
+                try:
+                    self._queue.put_nowait(item)
+                except queue.Full:
+                    with self._stats_lock:
+                        self._total_dropped += 1
+            self._shutdown.clear()
             self._worker_thread = threading.Thread(
                 target=self._worker_loop,
                 name="tracium-background-sender",
                 daemon=True,
             )
             self._worker_thread.start()
-            self._started = True
 
     def _worker_loop(self) -> None:
-        """Main worker loop that processes queued requests."""
+        """Worker loop. Exits after idle_timeout seconds of empty queue so the
+        thread is not present during long idle periods (debugger-friendly)."""
+        idle_deadline = time.monotonic() + self._idle_timeout
         while True:
             try:
                 try:
-                    request = self._queue.get(timeout=0.1)
+                    request = self._queue.get(timeout=0.5)
                 except queue.Empty:
                     if self._shutdown.is_set():
                         break
+                    if time.monotonic() >= idle_deadline:
+                        # Hand off the "is a worker alive" flag under the same
+                        # lock that producers use in `_ensure_worker`, so a
+                        # producer can never observe a live worker that is
+                        # about to die. Clear the flag while still holding the
+                        # lock; once released, any new enqueue will start a
+                        # fresh worker via _ensure_worker.
+                        with self._lock:
+                            if not self._queue.empty():
+                                idle_deadline = time.monotonic() + self._idle_timeout
+                                continue
+                            self._worker_thread = None
+                            return
                     continue
 
                 if request is None:
+                    # Sentinel: ack so flush()/join() can return cleanly, then exit.
+                    try:
+                        self._queue.task_done()
+                    except ValueError:
+                        pass
                     break
 
-                self._process_request(request)
-                self._queue.task_done()
+                try:
+                    self._process_request(request)
+                finally:
+                    # Always ack — if _process_request raises, skipping task_done
+                    # would make _queue.join() / flush() hang forever.
+                    try:
+                        self._queue.task_done()
+                    except ValueError:
+                        pass
+                idle_deadline = time.monotonic() + self._idle_timeout
 
             except Exception as e:
                 logger.debug(f"Background sender error (ignored): {type(e).__name__}: {e}")
 
+    @staticmethod
+    def _trace_id_from_path(path: str) -> str | None:
+        """Extract the trace_id from ``/agents/traces/<id>/spans`` etc., or
+        return None for endpoints that aren't trace-scoped."""
+        try:
+            prefix = "/agents/traces/"
+            if not path.startswith(prefix):
+                return None
+            tail = path[len(prefix) :]
+            slash = tail.find("/")
+            if slash <= 0:
+                return None
+            return tail[:slash]
+        except Exception:
+            return None
+
+    def _mark_trace_dead(self, trace_id: str) -> None:
+        """Remember a trace_id the backend has 404'd. Subsequent POSTs to that
+        trace are dropped at enqueue time. FIFO-bounded — at the cap we evict
+        the oldest entry rather than an arbitrary one."""
+        with self._dead_trace_ids_lock:
+            if trace_id in self._dead_trace_ids:
+                return
+            if len(self._dead_trace_ids) >= self._dead_trace_ids_max:
+                try:
+                    self._dead_trace_ids.popitem(last=False)
+                except KeyError:
+                    pass
+            self._dead_trace_ids[trace_id] = None
+        logger.debug("tracium: dropping further POSTs to trace %s (backend returned 404)", trace_id)
+
+    def _is_trace_dead(self, trace_id: str) -> bool:
+        with self._dead_trace_ids_lock:
+            return trace_id in self._dead_trace_ids
+
     def _process_request(self, request: QueuedRequest) -> None:
         """Process a single queued request with retry logic."""
+        # Pre-check: skip if this trace has already 404'd. The trace was never
+        # created on the backend, so further span/complete/fail POSTs are wasted.
+        trace_id = self._trace_id_from_path(request.path)
+        if trace_id and self._is_trace_dead(trace_id):
+            return
         try:
             if self._config.security_config:
                 is_allowed, wait_time = check_rate_limit(self._config.security_config)
                 if not is_allowed:
+                    # Sleeping here would stall every other queued request
+                    # behind this single rate-limited one. Telemetry is
+                    # best-effort, so drop the request and let downstream
+                    # backoff catch up naturally.
+                    with self._stats_lock:
+                        self._total_dropped += 1
                     logger.debug(
-                        f"Rate limited, waiting {wait_time}s before request to {request.path}"
+                        f"Rate limited (retry-after {wait_time}s); dropping "
+                        f"{request.method.value} {request.path}"
                     )
-                    time.sleep(wait_time)
+                    return
 
             payload = None
             if request.json is not None and self._config.security_config:
@@ -145,7 +286,8 @@ class BackgroundSender:
                         except Exception:
                             pass
 
-                    self._total_sent += 1
+                    with self._stats_lock:
+                        self._total_sent += 1
                     logger.debug(
                         f"Background request successful: {request.method.value} {request.path}"
                     )
@@ -154,6 +296,12 @@ class BackgroundSender:
                 except httpx.HTTPStatusError as e:
                     last_exception = e
                     status_code = e.response.status_code if e.response else None
+                    # A 404 on a trace-scoped path means the trace was never
+                    # created on the backend (zombie trace). Stop retrying and
+                    # mark the trace dead so future enqueues skip it too.
+                    if status_code == 404 and trace_id:
+                        self._mark_trace_dead(trace_id)
+                        return
                     if not should_retry(None, status_code, retry_config):
                         break
                 except (httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError) as e:
@@ -169,11 +317,13 @@ class BackgroundSender:
                     time.sleep(delay)
 
             if last_exception:
-                self._total_failed += 1
+                with self._stats_lock:
+                    self._total_failed += 1
+                    total_failed = self._total_failed
                 logger.warning(
                     f"Background request failed after retries: {request.method.value} {request.path} - "
                     f"{type(last_exception).__name__}: {last_exception}. "
-                    f"Total failures: {self._total_failed}"
+                    f"Total failures: {total_failed}"
                 )
 
         except Exception as e:
@@ -231,6 +381,20 @@ class BackgroundSender:
                 callback=callback,
             )
 
+            # Drop early if the destination trace is already known-dead.
+            trace_id_for_path = self._trace_id_from_path(path)
+            if trace_id_for_path and self._is_trace_dead(trace_id_for_path):
+                return True
+
+            # Serverless / sync mode: POST inline. No queue, no thread.
+            if self._sync_mode:
+                self._process_request(request)
+                with self._stats_lock:
+                    self._total_enqueued += 1
+                return True
+
+            self._ensure_worker()
+
             # Check queue capacity and warn if needed
             current_size = self._queue.qsize()
             threshold = getattr(self._config, "queue_warning_threshold", 0.8)
@@ -257,11 +421,17 @@ class BackgroundSender:
                 # Blocking mode - wait for space in queue
                 try:
                     self._queue.put(request, timeout=timeout)
-                    self._total_enqueued += 1
+                    with self._stats_lock:
+                        self._total_enqueued += 1
+                    # Close the race window: a worker that decided to idle-exit
+                    # between our earlier _ensure_worker() and this put would
+                    # leave the item stranded. Re-arm to be safe.
+                    self._ensure_worker()
                     return True
                 except queue.Full:
                     # Even with blocking, we timed out
-                    self._total_dropped += 1
+                    with self._stats_lock:
+                        self._total_dropped += 1
                     logger.error(
                         f"Tracium queue full after waiting {timeout}s. "
                         f"Dropping event to {path}. Total dropped: {self._total_dropped}. "
@@ -272,11 +442,17 @@ class BackgroundSender:
                     return False
             else:
                 self._queue.put_nowait(request)
-                self._total_enqueued += 1
+                with self._stats_lock:
+                    self._total_enqueued += 1
+                # Close the race window: a worker that decided to idle-exit
+                # between our earlier _ensure_worker() and this put would
+                # leave the item stranded. Re-arm to be safe.
+                self._ensure_worker()
                 return True
 
         except queue.Full:
-            self._total_dropped += 1
+            with self._stats_lock:
+                self._total_dropped += 1
             logger.error(
                 f"Tracium queue full ({self._max_queue_size}). Dropping event to {path}. "
                 f"Total dropped: {self._total_dropped}. "
@@ -293,25 +469,60 @@ class BackgroundSender:
         Wait for all queued requests to be processed.
 
         Args:
-            timeout: Maximum time to wait in seconds. Uses default if None.
+            timeout: Maximum time to wait in seconds. None waits indefinitely.
         """
+        if self._sync_mode:
+            return
+        # queue.Queue.join() has no timeout parameter, so poll the unfinished-task
+        # counter directly. We use the documented .unfinished_tasks attribute.
+        deadline = None if timeout is None else time.monotonic() + timeout
         try:
-            self._queue.join()
+            while True:
+                unfinished = getattr(self._queue, "unfinished_tasks", 0)
+                if unfinished <= 0:
+                    return
+                if deadline is not None and time.monotonic() >= deadline:
+                    return
+                time.sleep(0.02)
         except Exception:
             pass
 
     def _cleanup(self) -> None:
-        """Clean up resources on shutdown."""
+        """Clean up resources on shutdown.
+
+        We wait up to ``flush_timeout`` seconds for the queue to drain so
+        in-flight spans aren't lost. Only after that do we set the shutdown
+        flag and post the sentinel — items queued after the sentinel are
+        dropped by the worker, so the drain has to happen first.
+        """
         try:
+            start = time.monotonic()
+            deadline = start + self._flush_timeout
+            if (
+                not self._sync_mode
+                and self._worker_thread is not None
+                and self._worker_thread.is_alive()
+            ):
+                while time.monotonic() < deadline:
+                    if self._queue.empty():
+                        break
+                    time.sleep(0.05)
+
             self._shutdown.set()
 
-            try:
-                self._queue.put(None, timeout=0.5)
-            except Exception:
-                pass
+            # Only post the sentinel if there's a live worker to receive it.
+            # Otherwise the None sits in the queue and would poison the next
+            # lazily-started worker (it would see the sentinel and exit
+            # before processing anything real).
+            if self._worker_thread is not None and self._worker_thread.is_alive():
+                try:
+                    self._queue.put(None, timeout=0.5)
+                except Exception:
+                    pass
 
             if self._worker_thread and self._worker_thread.is_alive():
-                self._worker_thread.join(timeout=self._flush_timeout)
+                remaining = max(0.5, deadline - time.monotonic())
+                self._worker_thread.join(timeout=remaining)
 
         except Exception:
             pass
@@ -333,32 +544,36 @@ class BackgroundSender:
         try:
             current_size = self._queue.qsize()
             capacity = current_size / self._max_queue_size if self._max_queue_size > 0 else 0
+            # Snapshot all counters atomically so derived ratios are consistent.
+            with self._stats_lock:
+                total_enqueued = self._total_enqueued
+                total_sent = self._total_sent
+                total_failed = self._total_failed
+                total_dropped = self._total_dropped
 
             return {
                 "queue_size": current_size,
                 "max_queue_size": self._max_queue_size,
                 "capacity_percent": capacity * 100,
-                "is_healthy": capacity < 0.9 and self._total_dropped == 0,
-                "total_enqueued": self._total_enqueued,
-                "total_sent": self._total_sent,
-                "total_failed": self._total_failed,
-                "total_dropped": self._total_dropped,
-                "success_rate": (
-                    self._total_sent / self._total_enqueued if self._total_enqueued > 0 else 1.0
-                ),
-                "drop_rate": (
-                    self._total_dropped / self._total_enqueued if self._total_enqueued > 0 else 0.0
-                ),
+                "is_healthy": capacity < 0.9 and total_dropped == 0,
+                "total_enqueued": total_enqueued,
+                "total_sent": total_sent,
+                "total_failed": total_failed,
+                "total_dropped": total_dropped,
+                "success_rate": (total_sent / total_enqueued if total_enqueued > 0 else 1.0),
+                "drop_rate": (total_dropped / total_enqueued if total_enqueued > 0 else 0.0),
                 # Configuration
                 "blocking_enabled": getattr(self._config, "block_on_full_queue", False),
                 "queue_timeout": getattr(self._config, "queue_timeout", 5.0),
             }
         except Exception as e:
             logger.debug(f"Failed to get stats: {e}")
+            with self._stats_lock:
+                dropped = self._total_dropped
             return {
                 "error": str(e),
                 "max_queue_size": self._max_queue_size,
-                "total_dropped": self._total_dropped,
+                "total_dropped": dropped,
             }
 
 
@@ -385,3 +600,32 @@ def shutdown_background_sender() -> None:
         if _background_sender is not None:
             _background_sender.shutdown()
             _background_sender = None
+
+
+def _reset_after_fork() -> None:
+    """Reset sender state in forked child. The parent's worker thread does not
+    survive fork; its queue and lock are inherited in indeterminate state.
+
+    We must also repair the inherited instance itself: user code (closures,
+    cached client references) may still hold a pointer to the old sender. If
+    we only null out the module-level singleton, those references would call
+    `enqueue` on an object whose mutex could be locked-on-fork → deadlock.
+    Rebuild its locks and queue in place."""
+    global _background_sender, _sender_lock
+    stale = _background_sender
+    if stale is not None:
+        try:
+            stale._lock = threading.Lock()
+            stale._stats_lock = threading.Lock()
+            stale._dead_trace_ids_lock = threading.Lock()
+            stale._shutdown = threading.Event()
+            stale._queue = queue.Queue(maxsize=stale._max_queue_size)
+            stale._worker_thread = None
+        except Exception:
+            pass
+    _sender_lock = threading.Lock()
+    _background_sender = None
+
+
+if hasattr(_os, "register_at_fork"):
+    _os.register_at_fork(after_in_child=_reset_after_fork)

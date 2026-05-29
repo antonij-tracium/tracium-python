@@ -1,0 +1,411 @@
+"""Auto-propagate Tracium's contextvars across user-spawned threads.
+
+By default Python starts each :class:`threading.Thread` with an empty context,
+which means a Tracium span/trace active in the parent is not visible inside the
+thread. The same applies to :meth:`concurrent.futures.ThreadPoolExecutor.submit`.
+
+This module installs lightweight monkey-patches that capture the parent
+context at construction / submit time and run the target inside it. No new
+threads are spawned, and the patches are idempotent.
+
+Disabled when the env var ``TRACIUM_DISABLE_THREAD_PROPAGATION=1`` is set, for
+users on debuggers that don't tolerate the patched ``__init__`` signature.
+"""
+
+from __future__ import annotations
+
+import contextvars
+import logging
+import os
+import sys
+import threading
+import weakref
+from typing import Any
+
+from ..helpers.global_state import PATCH_LOCK
+
+# Tracks loops we've already installed our task factory on. Using a
+# WeakSet keyed on the loop object avoids setting attributes on the loop
+# itself — uvloop's C type and other slotted loop classes reject arbitrary
+# attribute assignment, which previously made us re-wrap on every call to
+# ``new_event_loop`` and layer factories indefinitely.
+_FACTORY_INSTALLED_LOOPS: weakref.WeakSet[Any] = weakref.WeakSet()
+_FACTORY_INSTALLED_LOOPS_LOCK = threading.Lock()
+# Fallback when the loop object isn't weak-referenceable: remember its id().
+# A bounded set so we don't grow unbounded over a long-running process.
+_FACTORY_INSTALLED_LOOP_IDS: set[int] = set()
+_FACTORY_INSTALLED_LOOP_IDS_MAX = 1024
+
+logger = logging.getLogger(__name__)
+
+_INSTALLED = False
+
+
+def install() -> None:
+    """Patch threading.Thread + ThreadPoolExecutor.submit to propagate contextvars.
+
+    Idempotent. No background threads are created — these patches only modify
+    construction/submit of threads the user is already creating.
+    """
+    global _INSTALLED
+    if _INSTALLED:
+        return
+    if os.environ.get("TRACIUM_DISABLE_THREAD_PROPAGATION"):
+        return
+
+    with PATCH_LOCK:
+        if _INSTALLED:
+            return
+        for step in (
+            _check_green_thread_compat,
+            _patch_threading_thread,
+            _patch_thread_pool_executor,
+            install_asyncio_task_factory,
+        ):
+            try:
+                step()
+            except Exception as e:
+                logger.debug(
+                    "tracium thread-propagation step %s failed: %s: %s",
+                    step.__name__,
+                    type(e).__name__,
+                    e,
+                )
+        _INSTALLED = True
+
+
+def install_asyncio_task_factory() -> None:
+    """Eagerly ensure every asyncio loop copies parent context onto new tasks.
+
+    Python 3.7+ ``asyncio.Task`` already copies context when none is supplied,
+    so this is mostly a safety net for codebases or custom event-loop policies
+    that have installed a non-copying task factory. We patch every path that
+    production stacks (uvicorn, gunicorn, uvloop, custom policies) actually
+    use to construct loops:
+
+    1. ``asyncio.new_event_loop`` — module-level entry point.
+    2. ``DefaultEventLoopPolicy.new_event_loop`` — the path asyncio.run /
+       gunicorn / uvicorn reach via the active policy.
+    3. ``uvloop.new_event_loop`` and ``uvloop.EventLoopPolicy.new_event_loop``
+       if uvloop is loaded — its loops do not go through asyncio's module
+       function.
+    4. If a loop is already running, install on it directly.
+
+    All steps are idempotent.
+    """
+    try:
+        import asyncio
+    except Exception:
+        return
+
+    _patch_asyncio_new_event_loop(asyncio)
+
+    try:
+        _patch_policy_new_event_loop(asyncio.DefaultEventLoopPolicy)
+    except Exception:
+        pass
+
+    if "uvloop" in sys.modules:
+        try:
+            import uvloop
+
+            if hasattr(uvloop, "new_event_loop"):
+                _patch_module_new_event_loop(uvloop)
+            if hasattr(uvloop, "EventLoopPolicy"):
+                _patch_policy_new_event_loop(uvloop.EventLoopPolicy)
+        except Exception:
+            pass
+
+    try:
+        loop = asyncio.get_running_loop()
+    except Exception:
+        loop = None
+    if loop is not None:
+        _install_factory_on_loop(loop)
+
+
+def _patch_module_new_event_loop(module: Any) -> None:
+    """Wrap ``module.new_event_loop`` so every loop it produces gets the
+    context-copying task factory. No-op if already patched."""
+    original = getattr(module, "new_event_loop", None)
+    if original is None or getattr(original, "_tracium_factory_patched", False):
+        return
+
+    def wrapper() -> Any:
+        loop = original()
+        try:
+            _install_factory_on_loop(loop)
+        except Exception:
+            pass
+        return loop
+
+    try:
+        import functools
+
+        functools.update_wrapper(wrapper, original)
+    except Exception:
+        pass
+    # Set marker AFTER update_wrapper so it isn't clobbered by attribute copy.
+    wrapper._tracium_factory_patched = True  # type: ignore[attr-defined]
+    module.new_event_loop = wrapper
+
+
+def _patch_policy_new_event_loop(policy_cls: Any) -> None:
+    """Wrap ``policy_cls.new_event_loop`` so loops created via the active
+    event-loop policy (the path uvicorn/gunicorn/asyncio.run actually use)
+    also get the task factory. No-op if already patched."""
+    original = getattr(policy_cls, "new_event_loop", None)
+    if original is None or getattr(original, "_tracium_factory_patched", False):
+        return
+
+    def wrapper(self: Any) -> Any:
+        loop = original(self)
+        try:
+            _install_factory_on_loop(loop)
+        except Exception:
+            pass
+        return loop
+
+    try:
+        import functools
+
+        functools.update_wrapper(wrapper, original)
+    except Exception:
+        pass
+    # Set marker AFTER update_wrapper so it isn't clobbered by attribute copy.
+    wrapper._tracium_factory_patched = True  # type: ignore[attr-defined]
+    try:
+        policy_cls.new_event_loop = wrapper
+    except (AttributeError, TypeError):
+        pass
+
+
+def _install_factory_on_loop(loop: Any) -> None:
+    with _FACTORY_INSTALLED_LOOPS_LOCK:
+        try:
+            if loop in _FACTORY_INSTALLED_LOOPS:
+                return
+        except TypeError:
+            # Loop object is unhashable — fall through and rely on id() set.
+            pass
+        if id(loop) in _FACTORY_INSTALLED_LOOP_IDS:
+            return
+
+    import asyncio
+    import inspect
+
+    previous = loop.get_task_factory()
+
+    # Some third-party task factories use a strict (loop, coro) signature and
+    # will TypeError if we forward `context=` or any other kwargs. Probe once
+    # and remember whether the previous factory accepts kwargs.
+    previous_accepts_context = False
+    if previous is not None:
+        try:
+            sig = inspect.signature(previous)
+            params = sig.parameters
+            has_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+            previous_accepts_context = has_var_kw or "context" in params
+        except (TypeError, ValueError):
+            # C-implemented or otherwise un-introspectable: assume strict signature.
+            previous_accepts_context = False
+
+    def factory(loop_: Any, coro: Any, **kwargs: Any) -> Any:
+        ctx = kwargs.pop("context", None) or contextvars.copy_context()
+        if previous is None:
+            # ``asyncio.Task`` only accepts ``context=`` in Python 3.11+. On
+            # 3.10 the constructor copies the *current* context at creation
+            # time, so creating the Task inside ``ctx.run(...)`` is equivalent
+            # and works on every supported version.
+            return ctx.run(lambda: asyncio.Task(coro, loop=loop_, **kwargs))
+        if previous_accepts_context:
+            kwargs.setdefault("context", ctx)
+            try:
+                return previous(loop_, coro, **kwargs)
+            except TypeError:
+                # Signature probe lied (e.g. **kwargs that rejects "context"):
+                # fall through to the strict-signature path.
+                kwargs.pop("context", None)
+        # Strict-signature previous factory: invoke it inside ctx so the
+        # resulting Task picks up our context. If that's not enough, also
+        # poke ``_context`` as a last resort.
+        task = ctx.run(lambda: previous(loop_, coro, **kwargs))
+        try:
+            if hasattr(task, "_context"):
+                task._context = ctx
+        except Exception:
+            pass
+        return task
+
+    try:
+        loop.set_task_factory(factory)
+    except Exception:
+        return
+
+    with _FACTORY_INSTALLED_LOOPS_LOCK:
+        try:
+            _FACTORY_INSTALLED_LOOPS.add(loop)
+            return
+        except TypeError:
+            pass
+        # Bound the id() fallback so very long-running processes that churn
+        # loops don't leak memory. Evict an arbitrary id — at worst we re-wrap
+        # an already-wrapped loop once, which is still bounded by the marker
+        # we set immediately afterward.
+        if len(_FACTORY_INSTALLED_LOOP_IDS) >= _FACTORY_INSTALLED_LOOP_IDS_MAX:
+            _FACTORY_INSTALLED_LOOP_IDS.pop()
+        _FACTORY_INSTALLED_LOOP_IDS.add(id(loop))
+
+
+def _patch_asyncio_new_event_loop(asyncio_mod: Any) -> None:
+    original = asyncio_mod.new_event_loop
+    # Distinct sentinel from `_tracium_patched` (used by the exception-handler
+    # patch in auto_trace_tracker) so both wrappers can coexist on the same
+    # `asyncio.new_event_loop` symbol, in either install order.
+    if getattr(original, "_tracium_factory_patched", False):
+        return
+
+    def patched_new_event_loop() -> Any:
+        loop = original()
+        try:
+            _install_factory_on_loop(loop)
+        except Exception:
+            pass
+        return loop
+
+    try:
+        import functools
+
+        functools.update_wrapper(patched_new_event_loop, original)
+    except Exception:
+        pass
+    # Set marker AFTER update_wrapper so it isn't clobbered by attribute copy.
+    patched_new_event_loop._tracium_factory_patched = True  # type: ignore[attr-defined]
+    asyncio_mod.new_event_loop = patched_new_event_loop
+
+
+def _check_green_thread_compat() -> None:
+    """Warn if gevent / eventlet monkey-patching has interactions we can't
+    detect after the fact.
+
+    gevent and eventlet replace ``threading.Thread`` (and related primitives)
+    with green-thread shims. The interaction with Tracium depends on order:
+
+    - ``monkey_patch_all()`` BEFORE ``tracium.init()`` → fine. Our patch wraps
+      the already-replaced ``threading.Thread.__init__``.
+    - ``monkey_patch_all()`` AFTER ``tracium.init()`` → gevent overwrites our
+      patch and we lose thread-context propagation.
+
+    We can only see the state at install time, so we emit a single hint
+    pointing users to the correct ordering.
+    """
+    gevent_loaded = "gevent.monkey" in sys.modules
+    eventlet_loaded = "eventlet.patcher" in sys.modules
+
+    if not (gevent_loaded or eventlet_loaded):
+        return
+
+    already_patched = False
+    if gevent_loaded:
+        try:
+            from gevent import monkey
+
+            already_patched = bool(monkey.is_module_patched("threading"))
+        except Exception:
+            pass
+    if not already_patched and eventlet_loaded:
+        try:
+            from eventlet import patcher
+
+            already_patched = bool(patcher.is_monkey_patched("thread"))
+        except Exception:
+            pass
+
+    runtime = "gevent" if gevent_loaded else "eventlet"
+    if already_patched:
+        logger.info(
+            "tracium: detected %s monkey-patching applied before init() — "
+            "Tracium will layer on top, context propagation works.",
+            runtime,
+        )
+    else:
+        logger.warning(
+            "tracium: %s is imported but threading is not yet monkey-patched. "
+            "Call %s monkey_patch_all() BEFORE tracium.init() / tracium.trace(), "
+            "otherwise the later monkey-patch will overwrite Tracium's thread "
+            "context-propagation patch and traces spawned in green threads will "
+            "be lost.",
+            runtime,
+            runtime,
+        )
+
+
+def _patch_threading_thread() -> None:
+    original_init = threading.Thread.__init__
+
+    if getattr(original_init, "_tracium_patched", False):
+        return
+
+    def patched_init(self: threading.Thread, *args: Any, **kwargs: Any) -> None:
+        original_init(self, *args, **kwargs)
+        try:
+            ctx = contextvars.copy_context()
+        except Exception:
+            return
+
+        # Shadow `self.run` on the instance so the wrapper works even when a
+        # subclass overrides `run` (class-level patches don't help there —
+        # subclass `run` would shadow our base patch). The bound method we
+        # capture here resolves to the subclass override if present.
+        original_bound_run = self.run
+
+        def _run_in_context() -> None:
+            ctx.run(original_bound_run)
+
+        self.run = _run_in_context  # type: ignore[method-assign]
+
+    # Preserve signature for IDEs / debugpy. ``update_wrapper`` copies
+    # attributes from the original, so set our marker AFTER it runs to
+    # ensure the marker isn't clobbered.
+    try:
+        import functools
+        import inspect
+
+        functools.update_wrapper(patched_init, original_init)
+        patched_init.__signature__ = inspect.signature(original_init)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+    patched_init._tracium_patched = True  # type: ignore[attr-defined]
+    threading.Thread.__init__ = patched_init  # type: ignore[method-assign]
+
+
+def _patch_thread_pool_executor() -> None:
+    import concurrent.futures
+
+    cls = concurrent.futures.ThreadPoolExecutor
+    original_submit = cls.submit
+
+    if getattr(original_submit, "_tracium_patched", False):
+        return
+
+    def patched_submit(self: Any, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        try:
+            ctx = contextvars.copy_context()
+        except Exception:
+            return original_submit(self, fn, *args, **kwargs)
+
+        def _runner(*a: Any, **kw: Any) -> Any:
+            return ctx.run(fn, *a, **kw)
+
+        return original_submit(self, _runner, *args, **kwargs)
+
+    try:
+        import functools
+
+        functools.update_wrapper(patched_submit, original_submit)  # type: ignore[arg-type]
+    except Exception:
+        pass
+
+    patched_submit._tracium_patched = True  # type: ignore[attr-defined]
+    cls.submit = patched_submit  # type: ignore[method-assign]

@@ -11,6 +11,7 @@ import contextlib
 import contextvars
 import uuid
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
@@ -259,6 +260,8 @@ class AgentTraceHandle:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cached_input_tokens: int | None = None,
+        cache_creation_input_tokens: int | None = None,
+        started_at: datetime | None = None,
     ) -> AgentSpanContext:
         try:
             validated_span_type = _validate_and_log("span", validate_span_type, span_type)
@@ -286,6 +289,11 @@ class AgentTraceHandle:
                 sequence_number=sequence_number,
                 latency_ms=latency_ms,
                 model_id=model_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_input_tokens=cached_input_tokens,
+                cache_creation_input_tokens=cache_creation_input_tokens,
+                started_at=started_at,
             )
         except Exception as e:
             logger.debug(f"span() creation failed (using fallback): {type(e).__name__}: {e}")
@@ -302,6 +310,11 @@ class AgentTraceHandle:
                 sequence_number=sequence_number,
                 latency_ms=latency_ms,
                 model_id=model_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_input_tokens=cached_input_tokens,
+                cache_creation_input_tokens=cache_creation_input_tokens,
+                started_at=started_at,
             )
 
     def tool_execution(
@@ -321,7 +334,9 @@ class AgentTraceHandle:
                 span.record_output(result)
         """
         try:
-            parent_span_id = self._state.current_parent_span_id
+            from ..context.trace_context import current_parent_span_id as _current_parent
+
+            parent_span_id = _current_parent()
             ctx = self.span(
                 span_type="tool",
                 name=name,
@@ -362,6 +377,7 @@ class AgentTraceHandle:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cached_input_tokens: int | None = None,
+        cache_creation_input_tokens: int | None = None,
     ) -> dict[str, Any]:
         try:
             validated_error = (
@@ -383,6 +399,7 @@ class AgentTraceHandle:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cached_input_tokens=cached_input_tokens,
+                cache_creation_input_tokens=cache_creation_input_tokens,
             ) as handle:
                 if output is not None:
                     handle.record_output(output)
@@ -500,6 +517,14 @@ class AgentTraceManager(
             response_dict = dict(response) if isinstance(response, dict) else {}
             trace_model_id = response_dict.get("model_id") or self._model_id
 
+            # `start_agent_trace` returns {} when the backend POST didn't
+            # land — defer remote_started so ensure_remote_started retries
+            # on the first span emission instead of accumulating zombie
+            # traces that will 404 every span POST.
+            create_succeeded = bool(response_dict) and bool(
+                response_dict.get("id") or response_dict.get("trace_id")
+            )
+
             state = TraceState(
                 client=self._client,
                 trace_id=str(trace_id),
@@ -509,7 +534,7 @@ class AgentTraceManager(
                 model_id=trace_model_id,
                 workspace_id=self._workspace_id,
                 version=self._version,
-                remote_started=True,
+                remote_started=create_succeeded,
                 has_spans=False,
             )
             self._state = state
@@ -588,6 +613,17 @@ class AgentTraceManager(
             except Exception:
                 pass
 
+            # If spans were emitted but the create POST never confirmed
+            # success (e.g. backend was briefly unreachable), make one final
+            # attempt to start the trace remotely so the complete/fail POST
+            # has somewhere to land. Without this, traces with spans would
+            # silently miss their terminal state.
+            if state.has_spans and not state.remote_started:
+                try:
+                    state.ensure_remote_started()
+                except Exception:
+                    pass
+
             if state.status == "failed":
                 if state.remote_started:
                     llm_summary = _combine_llm_info(state._llm_info)
@@ -622,13 +658,34 @@ class AgentTraceManager(
         try:
             self._finish(exc_type, exc_value, exc_tb)
         finally:
-            try:
-                if self._token is not None:
-                    from ..context.trace_context import CURRENT_TRACE_STATE
+            if self._token is not None:
+                from ..context.trace_context import CURRENT_TRACE_STATE
 
+                try:
                     CURRENT_TRACE_STATE.reset(self._token)
-            except Exception:
-                pass
+                except (ValueError, LookupError) as e:
+                    # Token was created in a different Context (e.g. __enter__
+                    # ran in the outer context but __exit__ ran inside a
+                    # ``contextvars.copy_context().run()`` or after an
+                    # asyncio task switch). Silently leaving the state set
+                    # would leak this trace into surrounding code. Clear it
+                    # if we still appear to be active here.
+                    import logging as _logging
+
+                    _logging.getLogger(__name__).debug(
+                        "trace __exit__: token reset failed (%s); "
+                        "clearing current state if it points to this trace",
+                        type(e).__name__,
+                    )
+                    try:
+                        if CURRENT_TRACE_STATE.get(None) is self._state:
+                            CURRENT_TRACE_STATE.set(None)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                finally:
+                    self._token = None
 
     async def __aexit__(
         self,

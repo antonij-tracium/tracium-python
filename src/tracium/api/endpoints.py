@@ -112,12 +112,15 @@ class TraciumAPIEndpoints:
                 extra={"agent_name": validated_agent_name, "trace_id": validated_trace_id},
             )
             result = self._http.post("/agents/traces", json=payload)
-            if isinstance(result, dict):
+            if isinstance(result, dict) and result:
                 return result
-            return {"id": validated_trace_id}
+            # Fail-open returned {} (or non-dict). Signal failure with empty
+            # dict so callers (e.g. ensure_remote_started) can distinguish a
+            # real success from a backend that never received the create POST.
+            return {}
         except Exception as e:
             logger.debug(f"start_agent_trace failed (returning fallback): {type(e).__name__}: {e}")
-            return {"id": trace_id} if trace_id else {}
+            return {}
 
     def record_agent_spans(
         self,

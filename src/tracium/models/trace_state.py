@@ -36,7 +36,6 @@ class TraceState:
     ended_at: datetime | None = None
     duration_ms: int | None = None
     finished: bool = False
-    span_stack: list[str] = field(default_factory=list)
     start_payload: dict[str, Any] = field(default_factory=dict)
     model_id: str | None = None
     workspace_id: str | None = None
@@ -50,6 +49,13 @@ class TraceState:
         Ensure the trace has been started in the backend.
 
         For lazy-start traces, we defer the `/agents/traces` call until the first span.
+
+        Only marks ``remote_started=True`` when the backend POST actually
+        succeeded (response is a non-empty dict carrying an id). If the create
+        call fail-opened to ``{}`` (backend unreachable / 5xx), we leave the
+        flag False so the next span emission retries the create — otherwise
+        we'd be sending spans for a trace the backend never created, and
+        every POST would 404.
         """
         if self.remote_started:
             return
@@ -62,64 +68,18 @@ class TraceState:
                 workspace_id=self.workspace_id,
                 version=self.version,
             )
-            if isinstance(payload, dict):
-                try:
-                    self.start_payload = dict(payload)
-                except Exception:
-                    pass
+        except Exception:
+            return
+
+        if not isinstance(payload, dict) or not payload:
+            # Fail-open returned {} — create did not reach the backend.
+            return
+        # Confirm at least one identifying field is present. The real backend
+        # response carries `id`/`trace_id` plus agent metadata.
+        if not (payload.get("id") or payload.get("trace_id")):
+            return
+        try:
+            self.start_payload = dict(payload)
         except Exception:
             pass
-        finally:
-            # Avoid retry loops; worst case spans still attempt to send and fail safely.
-            self.remote_started = True
-
-    def push_span(self, span_id: str) -> None:
-        self.span_stack.append(span_id)
-
-    def pop_span(self) -> None:
-        if self.span_stack:
-            self.span_stack.pop()
-
-    @property
-    def current_parent_span_id(self) -> str | None:
-        if not self.span_stack:
-            return None
-        return self.span_stack[-1]
-
-    @property
-    def current_depth_level(self) -> int:
-        """Return current nesting depth (0 = root level, 1 = first level, etc.)."""
-        return len(self.span_stack)
-
-    def copy_for_thread(self) -> TraceState:
-        """
-        Create a thread-safe copy of this trace state.
-
-        This is used when propagating context to threads to ensure each thread
-        has its own span_stack, preventing race conditions.
-
-        Returns:
-            A new TraceState with a fresh span_stack but sharing other attributes.
-        """
-        copy = TraceState(
-            client=self.client,
-            trace_id=self.trace_id,
-            agent_name=self.agent_name,
-            tags=self.tags.copy(),
-            summary=self.summary,
-            status=self.status,
-            error=self.error,
-            started_at=self.started_at,
-            ended_at=self.ended_at,
-            duration_ms=self.duration_ms,
-            finished=self.finished,
-            span_stack=self.span_stack.copy(),
-            start_payload=self.start_payload.copy(),
-            model_id=self.model_id,
-            workspace_id=self.workspace_id,
-            version=self.version,
-            remote_started=self.remote_started,
-            has_spans=self.has_spans,
-        )
-        copy._llm_info = self._llm_info
-        return copy
+        self.remote_started = True

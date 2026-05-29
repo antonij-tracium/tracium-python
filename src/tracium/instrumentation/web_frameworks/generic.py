@@ -27,12 +27,18 @@ def wrap_wsgi_app(app: Callable) -> Callable:
 
     @wraps(app)
     def wrapped(environ: dict[str, Any], start_response: Callable) -> Iterable[bytes]:
-        from ..auto_trace_tracker import close_web_trace_on_request_completion
+        import uuid
+
+        from ..auto_trace_tracker import (
+            WEB_REQUEST_TOKEN,
+            close_web_trace_on_request_completion,
+        )
 
         path = environ.get("PATH_INFO") or "/"
         route_name = path.strip("/").replace("/", "-") if path != "/" else "index"
 
         token = _GENERIC_ROUTE_INFO.set((path, route_name))
+        request_token = WEB_REQUEST_TOKEN.set(str(uuid.uuid4()))
         finished = False
 
         def finish(error: Exception | None = None) -> None:
@@ -45,6 +51,10 @@ def wrap_wsgi_app(app: Callable) -> Callable:
             finally:
                 try:
                     _GENERIC_ROUTE_INFO.reset(token)
+                except Exception:
+                    pass
+                try:
+                    WEB_REQUEST_TOKEN.reset(request_token)
                 except Exception:
                     pass
 

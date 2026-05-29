@@ -30,27 +30,64 @@ _WEB_ROUTE_WHEN_TRACE_CREATED: contextvars.ContextVar[str | None] = contextvars.
     default=None,
 )
 
+# Per-request token set by ASGI/WSGI middleware. Threadpool workers spawned by
+# FastAPI for sync handlers inherit this token via our contextvar-propagation
+# patch, so an auto-trace created in the worker can be registered against it.
+# When the middleware finalizes the request — back in the event loop — it
+# looks up the registry by this token to find the trace the worker created
+# (the worker's `_AUTO_TRACE_CONTEXT` set never propagated back here).
+WEB_REQUEST_TOKEN: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "tracium_web_request_token",
+    default=None,
+)
+
 _CLEANUP_REGISTERED = False
 _CLEANUP_LOCK = threading.Lock()
 _ORIGINAL_EXCEPTHOOK = None
 _ORIGINAL_ASYNCIO_HANDLER = None
 
+# Process-wide registry of active non-web auto-traces, keyed by entry_frame_id.
+# Lets sibling asyncio tasks (or threadpool workers) that share an entry frame
+# adopt the same auto-trace instead of each creating their own. Web traces are
+# not registered here — concurrent requests must stay isolated per ContextVar.
+_AUTO_TRACE_REGISTRY: dict[str, AutoTraceContext] = {}
+_AUTO_TRACE_REGISTRY_LOCK = threading.Lock()
+
+# Per-request web traces, keyed by `WEB_REQUEST_TOKEN`. Used so the middleware
+# can finalize a trace whose `_AUTO_TRACE_CONTEXT` was set in a worker thread's
+# context copy and is therefore invisible to the event loop.
+_WEB_AUTO_TRACE_REGISTRY: dict[str, AutoTraceContext] = {}
+_WEB_AUTO_TRACE_REGISTRY_LOCK = threading.Lock()
+
 _SKIP_PATTERNS = [
-    "src/tracium/",
-    "openai",
-    "anthropic",
-    "google",
-    "langchain",
-    "langgraph",
-    "threading",
-    "concurrent",
-    "asyncio",
-    "site-packages",
-    "werkzeug",
-    "starlette",
-    "django/core",
-    "uvicorn",
-    "gunicorn",
+    # Library package paths. Bracketed with path separators so user files
+    # like "openai_chat.py" or "my_anthropic_helper.py" aren't mistakenly
+    # skipped as library frames.
+    "/tracium/",
+    "/openai/",
+    "/anthropic/",
+    "/google/",
+    "/langchain/",
+    "/langgraph/",
+    "/threading.py",
+    "/concurrent/",
+    "/asyncio/",
+    "/site-packages/",
+    "/werkzeug/",
+    "/starlette/",
+    "/django/core/",
+    "/uvicorn/",
+    "/gunicorn/",
+    # Long-lived runtimes whose bootstrap frame would otherwise be the
+    # "outermost user frame" forever, defeating per-invocation trace
+    # boundaries. Skipping them makes the handler/task function the entry.
+    "/var/runtime/",  # AWS Lambda
+    "/var/lang/",  # AWS Lambda (alt path)
+    "/awslambdaric/",  # Lambda runtime interface client
+    "/prefect/",  # Prefect workers
+    "/celery/",  # Celery workers
+    "/rq/worker",  # RQ
+    "/dramatiq/",  # Dramatiq
 ]
 
 _WEB_FRAMEWORK_PATTERNS = {
@@ -73,6 +110,14 @@ def _close_trace_safely(
     """
     if context is None:
         return
+
+    try:
+        with _AUTO_TRACE_REGISTRY_LOCK:
+            entry_id = context.entry_frame_id
+            if _AUTO_TRACE_REGISTRY.get(entry_id) is context:
+                del _AUTO_TRACE_REGISTRY[entry_id]
+    except Exception:
+        pass
 
     should_mark_failed = context.has_failed_span or error is not None
 
@@ -363,8 +408,12 @@ def _find_workflow_entry_point() -> tuple[str, str]:
             func_name, file_path, frame_key = endpoint_info
             return frame_key, func_name
 
-        entry_function, entry_file, entry_line, _ = user_frames[-1]
-        frame_key = f"{entry_file}:{entry_function}:{entry_line}"
+        entry_function, entry_file, entry_line, entry_frame_id = user_frames[-1]
+        # Include the frame's runtime identity so each invocation of the same
+        # function (Lambda handler, Prefect task, batch-loop iteration, …) gets
+        # its own trace. Without id(frame), every invocation collapses into the
+        # first trace because (file, function, line) is invocation-invariant.
+        frame_key = f"{entry_file}:{entry_function}:{entry_line}:{entry_frame_id}"
 
         if entry_function == "<module>":
             filename_stem = Path(entry_file).stem
@@ -436,6 +485,34 @@ def get_or_create_auto_trace(
                 _close_trace_safely(auto_context)
 
     entry_frame_id, entry_function_name = _find_workflow_entry_point()
+
+    if not entry_frame_id.startswith("web:"):
+        with _AUTO_TRACE_REGISTRY_LOCK:
+            # With frame-id-based keys, stale entries from finished invocations
+            # would otherwise accumulate. Sweep them here.
+            stale_keys: list[str] = []
+            for key, ctx in _AUTO_TRACE_REGISTRY.items():
+                try:
+                    if bool(getattr(ctx.trace_handle._state, "finished", True)):
+                        stale_keys.append(key)
+                except Exception:
+                    stale_keys.append(key)
+            for key in stale_keys:
+                _AUTO_TRACE_REGISTRY.pop(key, None)
+
+            existing = _AUTO_TRACE_REGISTRY.get(entry_frame_id)
+            if existing is not None:
+                stale = True
+                try:
+                    state = existing.trace_handle._state
+                    stale = bool(getattr(state, "finished", True))
+                except Exception:
+                    stale = True
+                if not stale:
+                    _AUTO_TRACE_CONTEXT.set(existing)
+                    _WEB_ROUTE_WHEN_TRACE_CREATED.set(None)
+                    return existing.trace_handle, False
+                _AUTO_TRACE_REGISTRY.pop(entry_frame_id, None)
 
     if entry_frame_id.startswith("web:"):
         from .web_frameworks import register_response_hooks
@@ -516,8 +593,20 @@ def get_or_create_auto_trace(
             _WEB_ROUTE_WHEN_TRACE_CREATED.set(route_path)
         else:
             _WEB_ROUTE_WHEN_TRACE_CREATED.set(None)
+        # Also pin this trace to the per-request token so the middleware can
+        # find it even if it was created in a threadpool worker (whose context
+        # set doesn't propagate back to the event loop).
+        try:
+            token = WEB_REQUEST_TOKEN.get()
+            if token:
+                with _WEB_AUTO_TRACE_REGISTRY_LOCK:
+                    _WEB_AUTO_TRACE_REGISTRY[token] = auto_context
+        except Exception:
+            pass
     else:
         _WEB_ROUTE_WHEN_TRACE_CREATED.set(None)
+        with _AUTO_TRACE_REGISTRY_LOCK:
+            _AUTO_TRACE_REGISTRY[entry_frame_id] = auto_context
 
     return trace_handle, True
 
@@ -618,11 +707,39 @@ def get_current_function_for_span(use_route_info: bool = False) -> str:
 
 
 def cleanup_auto_trace() -> None:
-    """Force cleanup of any auto-created trace."""
+    """Force cleanup of any auto-created trace.
+
+    Also drains the process-wide registries so traces that were created in
+    background threads / threadpool workers (whose ``_AUTO_TRACE_CONTEXT``
+    set never propagated back to the caller of this function) still receive
+    their terminal POST.
+    """
     auto_context = _AUTO_TRACE_CONTEXT.get()
     if auto_context is not None:
         _close_trace_safely(auto_context)
         _AUTO_TRACE_CONTEXT.set(None)
+
+    # Drain non-web traces created in other contexts.
+    with _AUTO_TRACE_REGISTRY_LOCK:
+        contexts_to_close = list(_AUTO_TRACE_REGISTRY.values())
+        _AUTO_TRACE_REGISTRY.clear()
+    for ctx in contexts_to_close:
+        try:
+            _close_trace_safely(ctx)
+        except Exception:
+            pass
+
+    # Drain any leftover web traces too. Normally the middleware closes these
+    # per-request, but a cleanup call (e.g. at scenario end or process exit)
+    # is the right point to flush any that the middleware missed.
+    with _WEB_AUTO_TRACE_REGISTRY_LOCK:
+        web_to_close = list(_WEB_AUTO_TRACE_REGISTRY.values())
+        _WEB_AUTO_TRACE_REGISTRY.clear()
+    for ctx in web_to_close:
+        try:
+            _close_trace_safely(ctx)
+        except Exception:
+            pass
 
 
 def get_current_auto_trace_context() -> AutoTraceContext | None:
@@ -643,3 +760,27 @@ def close_web_trace_on_request_completion(error: BaseException | None = None) ->
         _AUTO_TRACE_CONTEXT.set(None)
         _WEB_ROUTE_WHEN_TRACE_CREATED.set(None)
         _close_trace_safely(auto_context, error=error)
+        # Also drop the per-token registry entry if any.
+        try:
+            token = WEB_REQUEST_TOKEN.get()
+            if token:
+                with _WEB_AUTO_TRACE_REGISTRY_LOCK:
+                    _WEB_AUTO_TRACE_REGISTRY.pop(token, None)
+        except Exception:
+            pass
+        return
+
+    # ContextVar is empty — most likely the trace was created in a sync handler
+    # dispatched to a threadpool (FastAPI's default), so its `_AUTO_TRACE_CONTEXT`
+    # set never propagated back to the event loop. Fall back to the per-request
+    # registry, which is keyed by the token the middleware set up-front.
+    try:
+        token = WEB_REQUEST_TOKEN.get()
+    except Exception:
+        token = None
+    if not token:
+        return
+    with _WEB_AUTO_TRACE_REGISTRY_LOCK:
+        ctx = _WEB_AUTO_TRACE_REGISTRY.pop(token, None)
+    if ctx is not None:
+        _close_trace_safely(ctx, error=error)

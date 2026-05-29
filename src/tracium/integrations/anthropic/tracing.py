@@ -148,8 +148,11 @@ def trace_anthropic_call(
 
     is_streaming = kwargs.get("stream", False)
 
+    from ..http_capture.dedup import owned_capture
+
     try:
-        response = original_fn()
+        with owned_capture():
+            response = original_fn()
     except Exception as e:
         if span_handle and span_context:
             _close_trace_on_error(e, span_handle, span_context)
@@ -209,8 +212,11 @@ async def trace_anthropic_call_async(
 
     is_streaming = kwargs.get("stream", False)
 
+    from ..http_capture.dedup import owned_capture
+
     try:
-        response = await original_fn()
+        with owned_capture():
+            response = await original_fn()
     except Exception as exc:
         if span_handle and span_context:
             _close_trace_on_error(exc, span_handle, span_context)

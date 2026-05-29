@@ -5,11 +5,14 @@ Global shared state for the Tracium SDK auto-instrumentation layer.
 from __future__ import annotations
 
 import contextvars
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from ..core import TraciumClient
+
+PATCH_LOCK = threading.Lock()
 
 _LANGCHAIN_ACTIVE_RUNS: contextvars.ContextVar[set[str]] = contextvars.ContextVar(
     "_langchain_active_runs", default=set()
