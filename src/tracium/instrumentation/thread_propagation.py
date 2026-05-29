@@ -204,9 +204,7 @@ def _install_factory_on_loop(loop: Any) -> None:
         try:
             sig = inspect.signature(previous)
             params = sig.parameters
-            has_var_kw = any(
-                p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
-            )
+            has_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
             previous_accepts_context = has_var_kw or "context" in params
         except (TypeError, ValueError):
             # C-implemented or otherwise un-introspectable: assume strict signature.

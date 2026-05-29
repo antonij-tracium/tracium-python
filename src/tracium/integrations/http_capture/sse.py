@@ -105,9 +105,7 @@ class SSEAccumulator:
             self._text_bytes += encoded_len
             return
         # Truncate at codepoint boundary by re-encoding the slice.
-        truncated = chunk.encode("utf-8", errors="replace")[:cap].decode(
-            "utf-8", errors="ignore"
-        )
+        truncated = chunk.encode("utf-8", errors="replace")[:cap].decode("utf-8", errors="ignore")
         if truncated:
             self._text.append(truncated)
             self._text_bytes += len(truncated.encode("utf-8", errors="replace"))
@@ -130,9 +128,7 @@ class SSEAccumulator:
             fn["arguments"] = existing + delta
             self._text_bytes += encoded_len
             return
-        truncated = delta.encode("utf-8", errors="replace")[:cap].decode(
-            "utf-8", errors="ignore"
-        )
+        truncated = delta.encode("utf-8", errors="replace")[:cap].decode("utf-8", errors="ignore")
         if truncated:
             fn["arguments"] = existing + truncated
             self._text_bytes += len(truncated.encode("utf-8", errors="replace"))

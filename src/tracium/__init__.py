@@ -312,7 +312,7 @@ def _candidate_caller_frames(max_depth: int = 20) -> list[Any]:
     f = frame.f_back
     depth = 0
     while f is not None and depth < max_depth:
-        module_name = (f.f_globals.get("__name__") or "")
+        module_name = f.f_globals.get("__name__") or ""
         head = module_name.split(".", 1)[0]
         is_tracium = module_name == "tracium" or module_name.startswith("tracium.")
         if head not in _AUTO_WRAP_FRAME_BLOCKLIST and not is_tracium:

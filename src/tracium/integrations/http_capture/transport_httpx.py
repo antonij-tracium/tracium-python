@@ -279,6 +279,7 @@ def _make_buffered_emit_cb(
     started_at: datetime,
 ) -> Any:
     """Build an `on_close` callback that logs truncation (if any) and emits."""
+
     def _cb() -> None:
         if collector.truncated:
             logger.debug(
@@ -289,6 +290,7 @@ def _make_buffered_emit_cb(
         _emit_from_buffered(
             url, request_body, collector.get_bytes(), response.status_code, started_at
         )
+
     return _cb
 
 
@@ -316,7 +318,8 @@ def _emit_from_bedrock_eventstream(
         if collector.truncated:
             logger.debug(
                 "tracium: Bedrock eventstream buffer truncated at %d bytes for %s",
-                len(collector.get_bytes()), url,
+                len(collector.get_bytes()),
+                url,
             )
         reconstructed = reconstruct_bedrock_stream(path, model, collector.get_bytes())
         call = parse(url, request_body, reconstructed, response.status_code)
@@ -417,18 +420,14 @@ class TraciumHTTPXTransport(httpx.BaseTransport):
         # real streaming semantics.
         buffered = _peek_buffered_content(response)
         if buffered is not None:
-            _emit_from_buffered(
-                url, request_body, buffered, response.status_code, started_at
-            )
+            _emit_from_buffered(url, request_body, buffered, response.status_code, started_at)
             return response
 
         collector = _BytesAccumulator()
         response.stream = _CapturingByteStream(
             cast(httpx.SyncByteStream, response.stream),
             collector,
-            on_close=_make_buffered_emit_cb(
-                url, request_body, response, collector, started_at
-            ),
+            on_close=_make_buffered_emit_cb(url, request_body, response, collector, started_at),
         )
         return response
 
@@ -501,18 +500,14 @@ class TraciumAsyncHTTPXTransport(httpx.AsyncBaseTransport):
         # so ``AsyncClient.stream(...)`` callers retain streaming semantics.
         buffered = _peek_buffered_content(response)
         if buffered is not None:
-            _emit_from_buffered(
-                url, request_body, buffered, response.status_code, started_at
-            )
+            _emit_from_buffered(url, request_body, buffered, response.status_code, started_at)
             return response
 
         collector = _BytesAccumulator()
         response.stream = _CapturingAsyncByteStream(
             cast(httpx.AsyncByteStream, response.stream),
             collector,
-            on_close=_make_buffered_emit_cb(
-                url, request_body, response, collector, started_at
-            ),
+            on_close=_make_buffered_emit_cb(url, request_body, response, collector, started_at),
         )
         return response
 

@@ -560,12 +560,8 @@ class BackgroundSender:
                 "total_sent": total_sent,
                 "total_failed": total_failed,
                 "total_dropped": total_dropped,
-                "success_rate": (
-                    total_sent / total_enqueued if total_enqueued > 0 else 1.0
-                ),
-                "drop_rate": (
-                    total_dropped / total_enqueued if total_enqueued > 0 else 0.0
-                ),
+                "success_rate": (total_sent / total_enqueued if total_enqueued > 0 else 1.0),
+                "drop_rate": (total_dropped / total_enqueued if total_enqueued > 0 else 0.0),
                 # Configuration
                 "blocking_enabled": getattr(self._config, "block_on_full_queue", False),
                 "queue_timeout": getattr(self._config, "queue_timeout", 5.0),
