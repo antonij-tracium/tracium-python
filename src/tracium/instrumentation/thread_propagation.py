@@ -213,15 +213,24 @@ def _install_factory_on_loop(loop: Any) -> None:
     def factory(loop_: Any, coro: Any, **kwargs: Any) -> Any:
         ctx = kwargs.pop("context", None) or contextvars.copy_context()
         if previous is None:
-            return asyncio.Task(coro, loop=loop_, context=ctx, **kwargs)  # type: ignore[call-arg]
+            # ``asyncio.Task`` only accepts ``context=`` in Python 3.11+. On
+            # 3.10 the constructor copies the *current* context at creation
+            # time, so creating the Task inside ``ctx.run(...)`` is equivalent
+            # and works on every supported version.
+            return ctx.run(lambda: asyncio.Task(coro, loop=loop_, **kwargs))
         if previous_accepts_context:
             kwargs.setdefault("context", ctx)
-            return previous(loop_, coro, **kwargs)
-        # Strict-signature previous factory: call it without kwargs and set
-        # context on the resulting task if possible.
-        task = previous(loop_, coro)
+            try:
+                return previous(loop_, coro, **kwargs)
+            except TypeError:
+                # Signature probe lied (e.g. **kwargs that rejects "context"):
+                # fall through to the strict-signature path.
+                kwargs.pop("context", None)
+        # Strict-signature previous factory: invoke it inside ctx so the
+        # resulting Task picks up our context. If that's not enough, also
+        # poke ``_context`` as a last resort.
+        task = ctx.run(lambda: previous(loop_, coro, **kwargs))
         try:
-            # Only Task instances expose this; ignore if not.
             if hasattr(task, "_context"):
                 task._context = ctx
         except Exception:
