@@ -54,6 +54,14 @@ _STREAM_OPTIONS_ENDPOINTS: frozenset[str] = frozenset(
     }
 )
 
+# Helper methods that return a stream *manager* (context manager that yields a
+# stream on __enter__). The HTTP request is deferred until __enter__, so span
+# setup must also be deferred — patched through _patch_manager_method.
+_MANAGER_ENDPOINTS: list[tuple[str, str, str, str]] = [
+    ("resources.responses", "Responses", "AsyncResponses", "stream"),
+    ("resources.chat.completions", "Completions", "AsyncCompletions", "stream"),
+]
+
 _USAGE_ATTRS = (
     "prompt_tokens",
     "completion_tokens",
@@ -159,6 +167,10 @@ def _extract_chunk_tokens(chunk: Any) -> tuple[int | None, int | None, int | Non
         # Responses API: usage arrives in the response.completed event as chunk.response.usage
         if hasattr(chunk, "response") and hasattr(chunk.response, "usage") and chunk.response.usage:
             return _extract_token_usage(chunk.response)
+        # chat.completions.stream() helper wraps raw chunks in ChunkEvent — usage
+        # is on the nested .chunk.usage attribute.
+        if hasattr(chunk, "chunk") and hasattr(chunk.chunk, "usage") and chunk.chunk.usage:
+            return _extract_token_usage(chunk.chunk)
     except Exception:
         pass
     return None
@@ -173,21 +185,41 @@ def _finalize_stream(
     response_model: str | None = None,
 ) -> None:
     try:
-        span_handle.record_output("".join(text_parts) or "(streaming response)")
-        if any(t is not None for t in tokens):
-            span_handle.set_token_usage(
-                input_tokens=tokens[0],
-                output_tokens=tokens[1],
-                cached_input_tokens=tokens[2],
-            )
-        if response_model:
-            span_handle.set_model_id(response_model)
-        if tool_calls_accumulator:
-            calls = [tool_calls_accumulator[k] for k in sorted(tool_calls_accumulator)]
-            span_handle.set_tool_calls(calls)
-        span_context.__exit__(None, None, None)
-    except Exception:
-        pass
+        try:
+            output = "".join(str(p) for p in text_parts) or "(streaming response)"
+        except Exception:
+            output = "(streaming response)"
+        try:
+            span_handle.record_output(output)
+        except Exception:
+            pass
+        try:
+            if any(t is not None for t in tokens):
+                span_handle.set_token_usage(
+                    input_tokens=tokens[0],
+                    output_tokens=tokens[1],
+                    cached_input_tokens=tokens[2],
+                )
+        except Exception:
+            pass
+        try:
+            if response_model:
+                span_handle.set_model_id(response_model)
+        except Exception:
+            pass
+        try:
+            if tool_calls_accumulator:
+                calls = [tool_calls_accumulator[k] for k in sorted(tool_calls_accumulator)]
+                span_handle.set_tool_calls(calls)
+        except Exception:
+            pass
+    finally:
+        # Always close the span, even if a setter above raised. Otherwise the
+        # span would stay "in_progress" forever in the backend.
+        try:
+            span_context.__exit__(None, None, None)
+        except Exception:
+            pass
 
     try:
         from ..instrumentation.auto_trace_tracker import (
@@ -242,6 +274,16 @@ class _BaseStreamWrapper:
             self._response_model,
         )
 
+    def __del__(self) -> None:
+        # Last-resort finalizer for streams that were never iterated to
+        # completion (early break, dropped reference, etc.). Without this the
+        # span would stay "in_progress" in the backend.
+        try:
+            if not self._finalized:
+                self._finalize_if_needed()
+        except Exception:
+            pass
+
 
 class StreamWrapper(_BaseStreamWrapper):
     def __enter__(self) -> StreamWrapper:
@@ -270,6 +312,14 @@ class StreamWrapper(_BaseStreamWrapper):
         self._process_chunk(chunk)
         return chunk
 
+    def close(self) -> None:
+        try:
+            self._finalize_if_needed()
+        finally:
+            close = getattr(self._stream, "close", None)
+            if callable(close):
+                close()
+
 
 class AsyncStreamWrapper(_BaseStreamWrapper):
     async def __aenter__(self) -> AsyncStreamWrapper:
@@ -297,6 +347,108 @@ class AsyncStreamWrapper(_BaseStreamWrapper):
             raise
         self._process_chunk(chunk)
         return chunk
+
+    async def close(self) -> None:
+        try:
+            self._finalize_if_needed()
+        finally:
+            close = getattr(self._stream, "close", None)
+            if callable(close):
+                result = close()
+                if hasattr(result, "__await__"):
+                    await result
+
+
+class _BaseStreamManagerWrapper:
+    """Wrap OpenAI's ``stream()`` helper managers (ResponseStreamManager,
+    ChatCompletionStreamManager, …). These defer the HTTP request until
+    ``__enter__``/``__aenter__``, so span setup must also be deferred.
+    """
+
+    def __init__(
+        self,
+        client: TraciumClient,
+        inner_manager: Any,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> None:
+        self._client = client
+        self._inner = inner_manager
+        self._args = args
+        self._kwargs = kwargs
+        self._stream_wrapper: Any = None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def _open_span(self) -> tuple[Any, Any]:
+        try:
+            _, span_context, span_handle, input_payload, _ = _setup_trace(
+                self._client, self._args, self._kwargs
+            )
+            if input_payload is not None:
+                try:
+                    span_handle.record_input(input_payload)
+                except Exception:
+                    pass
+            return span_context, span_handle
+        except Exception as e:
+            logger.debug(f"OpenAI stream manager trace setup failed: {e}")
+            return None, None
+
+
+class StreamManagerWrapper(_BaseStreamManagerWrapper):
+    def __enter__(self) -> Any:
+        from .http_capture.dedup import owned_capture
+
+        span_context, span_handle = self._open_span()
+        try:
+            with owned_capture():
+                raw_stream = self._inner.__enter__()
+        except Exception as e:
+            if span_handle and span_context:
+                _handle_error(e, span_handle, span_context)
+            raise
+
+        if span_handle and span_context:
+            self._stream_wrapper = StreamWrapper(raw_stream, span_handle, span_context)
+            return self._stream_wrapper
+        return raw_stream
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        try:
+            if self._stream_wrapper is not None:
+                self._stream_wrapper._finalize_if_needed(error=exc_val)
+        finally:
+            pass
+        return cast(bool, self._inner.__exit__(exc_type, exc_val, exc_tb))
+
+
+class AsyncStreamManagerWrapper(_BaseStreamManagerWrapper):
+    async def __aenter__(self) -> Any:
+        from .http_capture.dedup import owned_capture
+
+        span_context, span_handle = self._open_span()
+        try:
+            with owned_capture():
+                raw_stream = await self._inner.__aenter__()
+        except Exception as e:
+            if span_handle and span_context:
+                _handle_error(e, span_handle, span_context)
+            raise
+
+        if span_handle and span_context:
+            self._stream_wrapper = AsyncStreamWrapper(raw_stream, span_handle, span_context)
+            return self._stream_wrapper
+        return raw_stream
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        try:
+            if self._stream_wrapper is not None:
+                self._stream_wrapper._finalize_if_needed(error=exc_val)
+        finally:
+            pass
+        return cast(bool, await self._inner.__aexit__(exc_type, exc_val, exc_tb))
 
 
 from ._shared import extract_tools as _extract_tools  # noqa: E402
@@ -411,25 +563,51 @@ def _patch_openai_locked(client: TraciumClient) -> None:
         except Exception:
             pass
 
+    def _patch_manager_method(namespace: Any, method_name: str, is_async: bool) -> None:
+        try:
+            original = getattr(namespace, method_name)
+            if is_async:
+
+                def traced_mgr(*args: Any, **kwargs: Any) -> Any:
+                    inner = original(*args, **kwargs)
+                    return AsyncStreamManagerWrapper(client, inner, args, kwargs)
+            else:
+
+                def traced_mgr(*args: Any, **kwargs: Any) -> Any:
+                    inner = original(*args, **kwargs)
+                    return StreamManagerWrapper(client, inner, args, kwargs)
+
+            setattr(namespace, method_name, traced_mgr)
+        except Exception:
+            pass
+
+    def _resolve_namespace(module_path: str) -> Any:
+        ns = openai_module.resources
+        relative_parts = module_path.removeprefix("resources.").split(".")
+        for i, part in enumerate(relative_parts):
+            try:
+                ns = getattr(ns, part)
+            except AttributeError:
+                full_module = "openai.resources." + ".".join(relative_parts[: i + 1])
+                ns = importlib.import_module(full_module)
+                for remaining in relative_parts[i + 1 :]:
+                    ns = getattr(ns, remaining)
+                break
+        return ns
+
     if hasattr(openai_module, "resources"):
         for module_path, sync_cls, async_cls, method in _ENDPOINTS:
             try:
-                ns = openai_module.resources
-                relative_parts = module_path.removeprefix("resources.").split(".")
-                for i, part in enumerate(relative_parts):
-                    try:
-                        ns = getattr(ns, part)
-                    except AttributeError:
-                        # Some submodules (e.g. responses) are not re-exported from
-                        # openai.resources.__init__ but are importable directly.
-                        # relative_parts has "resources." stripped, so re-add it.
-                        full_module = "openai.resources." + ".".join(relative_parts[: i + 1])
-                        ns = importlib.import_module(full_module)
-                        for remaining in relative_parts[i + 1 :]:
-                            ns = getattr(ns, remaining)
-                        break
+                ns = _resolve_namespace(module_path)
                 _patch_method(getattr(ns, sync_cls), method, False, module_path)
                 _patch_method(getattr(ns, async_cls), method, True, module_path)
+            except Exception:
+                pass
+        for module_path, sync_cls, async_cls, method in _MANAGER_ENDPOINTS:
+            try:
+                ns = _resolve_namespace(module_path)
+                _patch_manager_method(getattr(ns, sync_cls), method, False)
+                _patch_manager_method(getattr(ns, async_cls), method, True)
             except Exception:
                 pass
     elif hasattr(openai_module, "ChatCompletion"):
