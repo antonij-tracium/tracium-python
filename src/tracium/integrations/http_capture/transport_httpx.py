@@ -36,6 +36,21 @@ _AWS_EVENTSTREAM_CT = "application/vnd.amazon.eventstream"
 # instance. The global ``install()`` patch reads it to avoid double-wrapping a
 # transport that's already wrapped (manually or otherwise).
 _TRACIUM_WRAPPED_FLAG = "_tracium_http_capture_wrapped"
+# Tests / users can mark a transport (e.g. ``httpx.MockTransport``) to opt out
+# of wrapping by setting ``transport._tracium_skip = True`` before constructing
+# the Client. Wrapping a MockTransport breaks tests that rely on transport
+# identity checks or that emit bodies the tracium parser can't handle.
+_TRACIUM_SKIP_FLAG = "_tracium_skip"
+
+
+def _should_skip_transport(transport: Any) -> bool:
+    if transport is None:
+        return True
+    if getattr(transport, _TRACIUM_WRAPPED_FLAG, False):
+        return True
+    if getattr(transport, _TRACIUM_SKIP_FLAG, False):
+        return True
+    return False
 
 
 def _looks_like_stream(response: httpx.Response) -> bool:
@@ -87,6 +102,10 @@ class _BytesAccumulator:
 
     def get_bytes(self) -> bytes:
         return bytes(self._buf)
+
+    @property
+    def truncated(self) -> bool:
+        return self._truncated
 
 
 # Back-compat alias for the (now-generic) collector — used by emit helpers
@@ -252,6 +271,27 @@ def _emit_from_buffered(
         emit_llm_span(call, started_at)
 
 
+def _make_buffered_emit_cb(
+    url: str,
+    request_body: bytes | None,
+    response: httpx.Response,
+    collector: _BytesAccumulator,
+    started_at: datetime,
+) -> Any:
+    """Build an `on_close` callback that logs truncation (if any) and emits."""
+    def _cb() -> None:
+        if collector.truncated:
+            logger.debug(
+                "tracium: captured response body truncated at %d bytes for %s",
+                len(collector.get_bytes()),
+                url,
+            )
+        _emit_from_buffered(
+            url, request_body, collector.get_bytes(), response.status_code, started_at
+        )
+    return _cb
+
+
 def _emit_from_bedrock_eventstream(
     url: str,
     request_body: bytes | None,
@@ -273,6 +313,11 @@ def _emit_from_bedrock_eventstream(
         from .providers import _model_from_bedrock_url
 
         model = _model_from_bedrock_url(url)
+        if collector.truncated:
+            logger.debug(
+                "tracium: Bedrock eventstream buffer truncated at %d bytes for %s",
+                len(collector.get_bytes()), url,
+            )
         reconstructed = reconstruct_bedrock_stream(path, model, collector.get_bytes())
         call = parse(url, request_body, reconstructed, response.status_code)
     except Exception as e:
@@ -381,8 +426,8 @@ class TraciumHTTPXTransport(httpx.BaseTransport):
         response.stream = _CapturingByteStream(
             cast(httpx.SyncByteStream, response.stream),
             collector,
-            on_close=lambda: _emit_from_buffered(
-                url, request_body, collector.get_bytes(), response.status_code, started_at
+            on_close=_make_buffered_emit_cb(
+                url, request_body, response, collector, started_at
             ),
         )
         return response
@@ -465,8 +510,8 @@ class TraciumAsyncHTTPXTransport(httpx.AsyncBaseTransport):
         response.stream = _CapturingAsyncByteStream(
             cast(httpx.AsyncByteStream, response.stream),
             collector,
-            on_close=lambda: _emit_from_buffered(
-                url, request_body, collector.get_bytes(), response.status_code, started_at
+            on_close=_make_buffered_emit_cb(
+                url, request_body, response, collector, started_at
             ),
         )
         return response
@@ -567,7 +612,7 @@ def uninstall() -> None:
 
 def _wrap_transports_sync(client: httpx.Client) -> None:
     transport = getattr(client, "_transport", None)
-    if transport is not None and not getattr(transport, _TRACIUM_WRAPPED_FLAG, False):
+    if transport is not None and not _should_skip_transport(transport):
         wrapped = TraciumHTTPXTransport(transport)
         setattr(wrapped, _TRACIUM_WRAPPED_FLAG, True)
         client._transport = wrapped
@@ -575,7 +620,7 @@ def _wrap_transports_sync(client: httpx.Client) -> None:
     mounts = getattr(client, "_mounts", None)
     if isinstance(mounts, dict):
         for pattern, mount in list(mounts.items()):
-            if mount is None or getattr(mount, _TRACIUM_WRAPPED_FLAG, False):
+            if _should_skip_transport(mount):
                 continue
             wrapped = TraciumHTTPXTransport(mount)
             setattr(wrapped, _TRACIUM_WRAPPED_FLAG, True)
@@ -584,7 +629,7 @@ def _wrap_transports_sync(client: httpx.Client) -> None:
 
 def _wrap_transports_async(client: httpx.AsyncClient) -> None:
     transport = getattr(client, "_transport", None)
-    if transport is not None and not getattr(transport, _TRACIUM_WRAPPED_FLAG, False):
+    if transport is not None and not _should_skip_transport(transport):
         wrapped = TraciumAsyncHTTPXTransport(transport)
         setattr(wrapped, _TRACIUM_WRAPPED_FLAG, True)
         client._transport = wrapped
@@ -592,7 +637,7 @@ def _wrap_transports_async(client: httpx.AsyncClient) -> None:
     mounts = getattr(client, "_mounts", None)
     if isinstance(mounts, dict):
         for pattern, mount in list(mounts.items()):
-            if mount is None or getattr(mount, _TRACIUM_WRAPPED_FLAG, False):
+            if _should_skip_transport(mount):
                 continue
             wrapped = TraciumAsyncHTTPXTransport(mount)
             setattr(wrapped, _TRACIUM_WRAPPED_FLAG, True)

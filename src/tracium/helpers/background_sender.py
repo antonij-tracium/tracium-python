@@ -96,6 +96,12 @@ class BackgroundSender:
         self._sync_mode = sync_mode or _is_serverless_env()
         self._worker_thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        # Stats counters are touched by both producer threads (enqueue path)
+        # and the worker (process/retry path). `+=` on a Python int is not
+        # atomic across all interpreters, and even on CPython a read in
+        # `get_stats` could see torn pairs (e.g. enqueued/sent ratio). Guard
+        # the four counters with a dedicated leaf lock.
+        self._stats_lock = threading.Lock()
 
         self._total_enqueued = 0
         self._total_dropped = 0
@@ -125,6 +131,25 @@ class BackgroundSender:
         with self._lock:
             if self._worker_thread is not None and self._worker_thread.is_alive():
                 return
+            # Drain any leftover shutdown sentinels from a previous lifecycle so
+            # the freshly-started worker doesn't immediately exit on a None it
+            # never enqueued for itself.
+            drained: list[QueuedRequest] = []
+            try:
+                while True:
+                    item = self._queue.get_nowait()
+                    if item is None:
+                        self._queue.task_done()
+                        continue
+                    drained.append(item)
+            except queue.Empty:
+                pass
+            for item in drained:
+                try:
+                    self._queue.put_nowait(item)
+                except queue.Full:
+                    with self._stats_lock:
+                        self._total_dropped += 1
             self._shutdown.clear()
             self._worker_thread = threading.Thread(
                 target=self._worker_loop,
@@ -160,10 +185,22 @@ class BackgroundSender:
                     continue
 
                 if request is None:
+                    # Sentinel: ack so flush()/join() can return cleanly, then exit.
+                    try:
+                        self._queue.task_done()
+                    except ValueError:
+                        pass
                     break
 
-                self._process_request(request)
-                self._queue.task_done()
+                try:
+                    self._process_request(request)
+                finally:
+                    # Always ack — if _process_request raises, skipping task_done
+                    # would make _queue.join() / flush() hang forever.
+                    try:
+                        self._queue.task_done()
+                    except ValueError:
+                        pass
                 idle_deadline = time.monotonic() + self._idle_timeout
 
             except Exception as e:
@@ -219,7 +256,8 @@ class BackgroundSender:
                     # behind this single rate-limited one. Telemetry is
                     # best-effort, so drop the request and let downstream
                     # backoff catch up naturally.
-                    self._total_dropped += 1
+                    with self._stats_lock:
+                        self._total_dropped += 1
                     logger.debug(
                         f"Rate limited (retry-after {wait_time}s); dropping "
                         f"{request.method.value} {request.path}"
@@ -248,7 +286,8 @@ class BackgroundSender:
                         except Exception:
                             pass
 
-                    self._total_sent += 1
+                    with self._stats_lock:
+                        self._total_sent += 1
                     logger.debug(
                         f"Background request successful: {request.method.value} {request.path}"
                     )
@@ -278,11 +317,13 @@ class BackgroundSender:
                     time.sleep(delay)
 
             if last_exception:
-                self._total_failed += 1
+                with self._stats_lock:
+                    self._total_failed += 1
+                    total_failed = self._total_failed
                 logger.warning(
                     f"Background request failed after retries: {request.method.value} {request.path} - "
                     f"{type(last_exception).__name__}: {last_exception}. "
-                    f"Total failures: {self._total_failed}"
+                    f"Total failures: {total_failed}"
                 )
 
         except Exception as e:
@@ -348,7 +389,8 @@ class BackgroundSender:
             # Serverless / sync mode: POST inline. No queue, no thread.
             if self._sync_mode:
                 self._process_request(request)
-                self._total_enqueued += 1
+                with self._stats_lock:
+                    self._total_enqueued += 1
                 return True
 
             self._ensure_worker()
@@ -379,7 +421,8 @@ class BackgroundSender:
                 # Blocking mode - wait for space in queue
                 try:
                     self._queue.put(request, timeout=timeout)
-                    self._total_enqueued += 1
+                    with self._stats_lock:
+                        self._total_enqueued += 1
                     # Close the race window: a worker that decided to idle-exit
                     # between our earlier _ensure_worker() and this put would
                     # leave the item stranded. Re-arm to be safe.
@@ -387,7 +430,8 @@ class BackgroundSender:
                     return True
                 except queue.Full:
                     # Even with blocking, we timed out
-                    self._total_dropped += 1
+                    with self._stats_lock:
+                        self._total_dropped += 1
                     logger.error(
                         f"Tracium queue full after waiting {timeout}s. "
                         f"Dropping event to {path}. Total dropped: {self._total_dropped}. "
@@ -398,7 +442,8 @@ class BackgroundSender:
                     return False
             else:
                 self._queue.put_nowait(request)
-                self._total_enqueued += 1
+                with self._stats_lock:
+                    self._total_enqueued += 1
                 # Close the race window: a worker that decided to idle-exit
                 # between our earlier _ensure_worker() and this put would
                 # leave the item stranded. Re-arm to be safe.
@@ -406,7 +451,8 @@ class BackgroundSender:
                 return True
 
         except queue.Full:
-            self._total_dropped += 1
+            with self._stats_lock:
+                self._total_dropped += 1
             logger.error(
                 f"Tracium queue full ({self._max_queue_size}). Dropping event to {path}. "
                 f"Total dropped: {self._total_dropped}. "
@@ -423,12 +469,21 @@ class BackgroundSender:
         Wait for all queued requests to be processed.
 
         Args:
-            timeout: Maximum time to wait in seconds. Uses default if None.
+            timeout: Maximum time to wait in seconds. None waits indefinitely.
         """
         if self._sync_mode:
             return
+        # queue.Queue.join() has no timeout parameter, so poll the unfinished-task
+        # counter directly. We use the documented .unfinished_tasks attribute.
+        deadline = None if timeout is None else time.monotonic() + timeout
         try:
-            self._queue.join()
+            while True:
+                unfinished = getattr(self._queue, "unfinished_tasks", 0)
+                if unfinished <= 0:
+                    return
+                if deadline is not None and time.monotonic() >= deadline:
+                    return
+                time.sleep(0.02)
         except Exception:
             pass
 
@@ -455,10 +510,15 @@ class BackgroundSender:
 
             self._shutdown.set()
 
-            try:
-                self._queue.put(None, timeout=0.5)
-            except Exception:
-                pass
+            # Only post the sentinel if there's a live worker to receive it.
+            # Otherwise the None sits in the queue and would poison the next
+            # lazily-started worker (it would see the sentinel and exit
+            # before processing anything real).
+            if self._worker_thread is not None and self._worker_thread.is_alive():
+                try:
+                    self._queue.put(None, timeout=0.5)
+                except Exception:
+                    pass
 
             if self._worker_thread and self._worker_thread.is_alive():
                 remaining = max(0.5, deadline - time.monotonic())
@@ -484,21 +544,27 @@ class BackgroundSender:
         try:
             current_size = self._queue.qsize()
             capacity = current_size / self._max_queue_size if self._max_queue_size > 0 else 0
+            # Snapshot all counters atomically so derived ratios are consistent.
+            with self._stats_lock:
+                total_enqueued = self._total_enqueued
+                total_sent = self._total_sent
+                total_failed = self._total_failed
+                total_dropped = self._total_dropped
 
             return {
                 "queue_size": current_size,
                 "max_queue_size": self._max_queue_size,
                 "capacity_percent": capacity * 100,
-                "is_healthy": capacity < 0.9 and self._total_dropped == 0,
-                "total_enqueued": self._total_enqueued,
-                "total_sent": self._total_sent,
-                "total_failed": self._total_failed,
-                "total_dropped": self._total_dropped,
+                "is_healthy": capacity < 0.9 and total_dropped == 0,
+                "total_enqueued": total_enqueued,
+                "total_sent": total_sent,
+                "total_failed": total_failed,
+                "total_dropped": total_dropped,
                 "success_rate": (
-                    self._total_sent / self._total_enqueued if self._total_enqueued > 0 else 1.0
+                    total_sent / total_enqueued if total_enqueued > 0 else 1.0
                 ),
                 "drop_rate": (
-                    self._total_dropped / self._total_enqueued if self._total_enqueued > 0 else 0.0
+                    total_dropped / total_enqueued if total_enqueued > 0 else 0.0
                 ),
                 # Configuration
                 "blocking_enabled": getattr(self._config, "block_on_full_queue", False),
@@ -506,10 +572,12 @@ class BackgroundSender:
             }
         except Exception as e:
             logger.debug(f"Failed to get stats: {e}")
+            with self._stats_lock:
+                dropped = self._total_dropped
             return {
                 "error": str(e),
                 "max_queue_size": self._max_queue_size,
-                "total_dropped": self._total_dropped,
+                "total_dropped": dropped,
             }
 
 
@@ -540,9 +608,25 @@ def shutdown_background_sender() -> None:
 
 def _reset_after_fork() -> None:
     """Reset sender state in forked child. The parent's worker thread does not
-    survive fork; its queue and lock are inherited in indeterminate state. Drop
-    the inherited instance so the child lazily creates a fresh sender."""
+    survive fork; its queue and lock are inherited in indeterminate state.
+
+    We must also repair the inherited instance itself: user code (closures,
+    cached client references) may still hold a pointer to the old sender. If
+    we only null out the module-level singleton, those references would call
+    `enqueue` on an object whose mutex could be locked-on-fork → deadlock.
+    Rebuild its locks and queue in place."""
     global _background_sender, _sender_lock
+    stale = _background_sender
+    if stale is not None:
+        try:
+            stale._lock = threading.Lock()
+            stale._stats_lock = threading.Lock()
+            stale._dead_trace_ids_lock = threading.Lock()
+            stale._shutdown = threading.Event()
+            stale._queue = queue.Queue(maxsize=stale._max_queue_size)
+            stale._worker_thread = None
+        except Exception:
+            pass
     _sender_lock = threading.Lock()
     _background_sender = None
 

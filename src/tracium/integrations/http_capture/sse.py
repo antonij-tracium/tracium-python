@@ -143,13 +143,22 @@ class SSEAccumulator:
         if not chunk:
             return
         self._buffer.extend(chunk)
-        while True:
-            nl = self._buffer.find(b"\n")
+        # Walk the buffer once with a moving index instead of repeatedly
+        # `del self._buffer[: nl + 1]`, which is O(n) per line and pushes the
+        # total work to O(n²) on long streams of small events. Slice the
+        # tail once at the end.
+        start = 0
+        buf = self._buffer
+        n = len(buf)
+        while start < n:
+            nl = buf.find(b"\n", start)
             if nl < 0:
                 break
-            line = bytes(self._buffer[:nl])
-            del self._buffer[: nl + 1]
+            line = bytes(buf[start:nl])
+            start = nl + 1
             self._handle_line(line.rstrip(b"\r"))
+        if start > 0:
+            del self._buffer[:start]
 
     def finalize(self) -> dict[str, Any]:
         """Return a non-streaming-shaped dict reconstructed from the chunks."""

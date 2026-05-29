@@ -182,9 +182,13 @@ def _class_name_for_frame(frame) -> str | None:
 
 
 def _is_skip_file(filename: str) -> bool:
-    if filename.startswith(_TRACIUM_PKG_ROOT):
+    # Normalize Windows backslashes so substrings like "/asyncio/" match
+    # the equivalent "\\asyncio\\" found on Windows paths.
+    normalized = filename.replace("\\", "/")
+    pkg_root = _TRACIUM_PKG_ROOT.replace("\\", "/")
+    if normalized.startswith(pkg_root):
         return True
-    return any(s in filename for s in _SKIP_FILE_SUBSTRINGS)
+    return any(s in normalized for s in _SKIP_FILE_SUBSTRINGS)
 
 
 def _module_name_from_file(filename: str) -> str | None:

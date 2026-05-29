@@ -202,13 +202,35 @@ def _wrap_bedrock_eventstream_response(
             finalize()
 
     def teed_iter_lines(*args: Any, **kwargs: Any) -> Iterator[bytes | str]:
+        # AWS event-stream is a binary protocol — payloads can contain 0x0A
+        # legitimately, so splitting on newlines and re-inserting them does
+        # NOT round-trip the original bytes. Instead, tap response.raw and
+        # drain raw bytes into the buffer here, while still delegating the
+        # line iteration to the original method for the caller. We avoid
+        # double-buffering by NOT extending the buffer from iter_lines output.
         try:
-            for line in original_iter_lines(*args, **kwargs):
-                if isinstance(line, bytes | bytearray):
-                    buffer.extend(bytes(line) + b"\n")
-                yield line
+            yield from original_iter_lines(*args, **kwargs)
         finally:
             finalize()
+
+    # Also tee response.raw.read so byte-level reads (used by iter_lines
+    # internally, and by botocore's event-stream parser when consuming raw)
+    # land in the buffer with exact original bytes.
+    raw = getattr(response, "raw", None)
+    if raw is not None and hasattr(raw, "read"):
+        original_raw_read = raw.read
+
+        def teed_raw_read(*args: Any, **kwargs: Any) -> Any:
+            data = original_raw_read(*args, **kwargs)
+            if isinstance(data, bytes | bytearray) and data:
+                buffer.extend(data)
+            return data
+
+        try:
+            raw.read = teed_raw_read
+        except Exception:
+            # Some raw objects are read-only; iter_content tee is still in place.
+            pass
 
     def closing() -> None:
         try:

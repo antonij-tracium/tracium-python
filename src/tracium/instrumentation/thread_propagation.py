@@ -139,13 +139,14 @@ def _patch_module_new_event_loop(module: Any) -> None:
             pass
         return loop
 
-    wrapper._tracium_factory_patched = True  # type: ignore[attr-defined]
     try:
         import functools
 
         functools.update_wrapper(wrapper, original)
     except Exception:
         pass
+    # Set marker AFTER update_wrapper so it isn't clobbered by attribute copy.
+    wrapper._tracium_factory_patched = True  # type: ignore[attr-defined]
     module.new_event_loop = wrapper
 
 
@@ -165,13 +166,14 @@ def _patch_policy_new_event_loop(policy_cls: Any) -> None:
             pass
         return loop
 
-    wrapper._tracium_factory_patched = True  # type: ignore[attr-defined]
     try:
         import functools
 
         functools.update_wrapper(wrapper, original)
     except Exception:
         pass
+    # Set marker AFTER update_wrapper so it isn't clobbered by attribute copy.
+    wrapper._tracium_factory_patched = True  # type: ignore[attr-defined]
     try:
         policy_cls.new_event_loop = wrapper
     except (AttributeError, TypeError):
@@ -190,14 +192,43 @@ def _install_factory_on_loop(loop: Any) -> None:
             return
 
     import asyncio
+    import inspect
 
     previous = loop.get_task_factory()
 
+    # Some third-party task factories use a strict (loop, coro) signature and
+    # will TypeError if we forward `context=` or any other kwargs. Probe once
+    # and remember whether the previous factory accepts kwargs.
+    previous_accepts_context = False
+    if previous is not None:
+        try:
+            sig = inspect.signature(previous)
+            params = sig.parameters
+            has_var_kw = any(
+                p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )
+            previous_accepts_context = has_var_kw or "context" in params
+        except (TypeError, ValueError):
+            # C-implemented or otherwise un-introspectable: assume strict signature.
+            previous_accepts_context = False
+
     def factory(loop_: Any, coro: Any, **kwargs: Any) -> Any:
-        kwargs.setdefault("context", contextvars.copy_context())
+        ctx = kwargs.pop("context", None) or contextvars.copy_context()
         if previous is None:
-            return asyncio.Task(coro, loop=loop_, **kwargs)
-        return previous(loop_, coro, **kwargs)
+            return asyncio.Task(coro, loop=loop_, context=ctx, **kwargs)  # type: ignore[call-arg]
+        if previous_accepts_context:
+            kwargs.setdefault("context", ctx)
+            return previous(loop_, coro, **kwargs)
+        # Strict-signature previous factory: call it without kwargs and set
+        # context on the resulting task if possible.
+        task = previous(loop_, coro)
+        try:
+            # Only Task instances expose this; ignore if not.
+            if hasattr(task, "_context"):
+                task._context = ctx
+        except Exception:
+            pass
+        return task
 
     try:
         loop.set_task_factory(factory)
@@ -235,13 +266,14 @@ def _patch_asyncio_new_event_loop(asyncio_mod: Any) -> None:
             pass
         return loop
 
-    patched_new_event_loop._tracium_factory_patched = True  # type: ignore[attr-defined]
     try:
         import functools
 
         functools.update_wrapper(patched_new_event_loop, original)
     except Exception:
         pass
+    # Set marker AFTER update_wrapper so it isn't clobbered by attribute copy.
+    patched_new_event_loop._tracium_factory_patched = True  # type: ignore[attr-defined]
     asyncio_mod.new_event_loop = patched_new_event_loop
 
 
